@@ -3,7 +3,7 @@ import asyncio
 import json
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -17,6 +17,9 @@ SHEET_NAME = "Сергей Олегович"
 
 flask_app = Flask(__name__)
 telegram_app = None
+
+# Хранилище временных данных для каждого пользователя
+user_data = {}
 
 # ========== GOOGLE SHEETS ==========
 def get_worksheet():
@@ -44,13 +47,16 @@ def get_available_orders():
             })
     return orders
 
-def write_to_order(row_number, value=500):
+def update_order(row, data):
     sheet = get_worksheet()
-    sheet.update(f'G{row_number}', [[value]])
-    print(f"✅ Записано {value} в G{row_number}")
+    sheet.update(f'G{row}', [[data['cost']]])
+    sheet.update(f'H{row}', [[data['delivery']]])
+    sheet.update(f'I{row}', [[data['expense']]])
 
 # ========== КОМАНДЫ ==========
 async def start(update, context):
+    user_id = update.effective_user.id
+    user_data[user_id] = {}
     keyboard = [[InlineKeyboardButton("📋 Создать отчёт", callback_data="new_report")]]
     await update.message.reply_text(
         "👋 Здравствуйте! Для создания отчёта нажмите на кнопку:",
@@ -87,10 +93,49 @@ async def select_order_callback(update, context):
         await query.edit_message_text("❌ Отменено. Для нового отчёта нажмите /start")
         return
     
+    user_id = update.effective_user.id
     row = int(query.data.split('_')[1])
-    write_to_order(row, 500)
+    user_data[user_id]['row'] = row
     
-    await query.edit_message_text(f"✅ В заявку (строка {row}) записано 500 в столбец «Сумма заказа».")
+    await query.edit_message_text("Введите сумму заказа (только цифры):")
+
+async def handle_cost(update, context):
+    user_id = update.effective_user.id
+    try:
+        cost = int(update.message.text.strip())
+        if cost < 0:
+            raise ValueError
+        user_data[user_id]['cost'] = cost
+        await update.message.reply_text("Введите стоимость выезда/доставки (только цифры):")
+    except ValueError:
+        await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
+
+async def handle_delivery(update, context):
+    user_id = update.effective_user.id
+    try:
+        delivery = int(update.message.text.strip())
+        if delivery < 0:
+            raise ValueError
+        user_data[user_id]['delivery'] = delivery
+        await update.message.reply_text("Введите расходы (только цифры):")
+    except ValueError:
+        await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
+
+async def handle_expense(update, context):
+    user_id = update.effective_user.id
+    try:
+        expense = int(update.message.text.strip())
+        if expense < 0:
+            raise ValueError
+        user_data[user_id]['expense'] = expense
+        
+        row = user_data[user_id]['row']
+        update_order(row, user_data[user_id])
+        
+        await update.message.reply_text(f"✅ Отчёт сохранён! Сумма {user_data[user_id]['cost']}, выезд {user_data[user_id]['delivery']}, расходы {user_data[user_id]['expense']} записаны в строку {row}.")
+        del user_data[user_id]
+    except ValueError:
+        await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
 
 # ========== ВЕБХУК ==========
 @flask_app.route('/webhook', methods=['POST'])
@@ -123,6 +168,10 @@ def run_webhook():
     telegram_app.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
     telegram_app.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
     telegram_app.add_handler(CallbackQueryHandler(lambda u,c: None, pattern="^cancel$"))
+    
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cost))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_delivery))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_expense))
     
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
