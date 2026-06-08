@@ -273,7 +273,7 @@ async def confirm_callback(update, context):
         f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб"
     )
     
-    await query.edit_message_text(success_message)
+    await query.message.reply_text(success_message)
     
     # Полный сброс и показ списка заявок
     context.user_data.clear()
