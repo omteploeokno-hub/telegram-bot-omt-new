@@ -17,11 +17,8 @@ SHEET_NAME = "Сергей Олегович"
 
 flask_app = Flask(__name__)
 telegram_app = None
-
-# Единый event loop (создаётся один раз при запуске)
 main_loop = None
 
-# Состояния разговора
 COST, DELIVERY, EXPENSE = range(3)
 
 # ========== GOOGLE SHEETS ==========
@@ -52,9 +49,10 @@ def get_available_orders():
 
 def update_order(row, data):
     sheet = get_worksheet()
-    sheet.update(f'G{row}', [[data['cost']]])
-    sheet.update(f'H{row}', [[data['delivery']]])
-    sheet.update(f'I{row}', [[data['expense']]])
+    # Исправлен порядок аргументов (убрано предупреждение)
+    sheet.update(values=[[data['cost']]], range_name=f'G{row}')
+    sheet.update(values=[[data['delivery']]], range_name=f'H{row}')
+    sheet.update(values=[[data['expense']]], range_name=f'I{row}')
 
 # ========== КОМАНДЫ ==========
 async def start(update, context):
@@ -86,6 +84,12 @@ async def new_report_callback(update, context):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+async def cancel_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("❌ Отменено. Для нового отчёта нажмите /start")
+    return ConversationHandler.END
+
 async def select_order_callback(update, context):
     query = update.callback_query
     await query.answer()
@@ -94,9 +98,7 @@ async def select_order_callback(update, context):
         await query.edit_message_text("❌ Отменено. Для нового отчёта нажмите /start")
         return ConversationHandler.END
     
-    # Очищаем данные предыдущего диалога
     context.user_data.clear()
-    
     row = int(query.data.split('_')[1])
     context.user_data['row'] = row
     
@@ -139,7 +141,6 @@ async def get_expense(update, context):
         
         await update.message.reply_text(f"✅ Отчёт сохранён! Сумма {context.user_data['cost']}, выезд {context.user_data['delivery']}, расходы {expense} записаны в строку {row}.")
         
-        # Очищаем данные после завершения
         context.user_data.clear()
         return ConversationHandler.END
     except ValueError:
@@ -159,7 +160,6 @@ def webhook():
         data = request.get_json()
         update = Update.de_json(data, telegram_app.bot)
         
-        # Используем единый event loop вместо создания нового
         asyncio.run_coroutine_threadsafe(
             telegram_app.process_update(update),
             main_loop
@@ -192,10 +192,9 @@ def run_webhook():
     
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
-    telegram_app.add_handler(CallbackQueryHandler(lambda u,c: None, pattern="^cancel$"))
+    telegram_app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
     telegram_app.add_handler(conv_handler)
     
-    # Создаём единый event loop
     main_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(main_loop)
     main_loop.run_until_complete(telegram_app.initialize())
@@ -204,14 +203,12 @@ def run_webhook():
     port = int(os.environ.get("PORT", 8080))
     print(f"✅ Бот запущен на порту {port}")
     
-    # Запускаем Flask в отдельном потоке с тем же loop
     def run_flask():
         flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     
     import threading
     threading.Thread(target=run_flask, daemon=True).start()
     
-    # Держим loop активным
     main_loop.run_forever()
 
 if __name__ == '__main__':
