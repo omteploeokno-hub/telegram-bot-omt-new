@@ -18,6 +18,9 @@ SHEET_NAME = "Сергей Олегович"
 flask_app = Flask(__name__)
 telegram_app = None
 
+# Единый event loop (создаётся один раз при запуске)
+main_loop = None
+
 # Состояния разговора
 COST, DELIVERY, EXPENSE = range(3)
 
@@ -82,7 +85,6 @@ async def new_report_callback(update, context):
         "📋 Выберите заявку:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    return
 
 async def select_order_callback(update, context):
     query = update.callback_query
@@ -91,6 +93,9 @@ async def select_order_callback(update, context):
     if query.data == "cancel":
         await query.edit_message_text("❌ Отменено. Для нового отчёта нажмите /start")
         return ConversationHandler.END
+    
+    # Очищаем данные предыдущего диалога
+    context.user_data.clear()
     
     row = int(query.data.split('_')[1])
     context.user_data['row'] = row
@@ -134,26 +139,31 @@ async def get_expense(update, context):
         
         await update.message.reply_text(f"✅ Отчёт сохранён! Сумма {context.user_data['cost']}, выезд {context.user_data['delivery']}, расходы {expense} записаны в строку {row}.")
         
+        # Очищаем данные после завершения
+        context.user_data.clear()
         return ConversationHandler.END
     except ValueError:
         await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
         return EXPENSE
 
 async def cancel(update, context):
+    context.user_data.clear()
     await update.message.reply_text("❌ Отменено. Для нового отчёта нажмите /start")
     return ConversationHandler.END
 
 # ========== ВЕБХУК ==========
 @flask_app.route('/webhook', methods=['POST'])
 def webhook():
-    global telegram_app
+    global telegram_app, main_loop
     try:
         data = request.get_json()
         update = Update.de_json(data, telegram_app.bot)
         
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(telegram_app.process_update(update))
+        # Используем единый event loop вместо создания нового
+        asyncio.run_coroutine_threadsafe(
+            telegram_app.process_update(update),
+            main_loop
+        )
         
         return "OK", 200
     except Exception as e:
@@ -166,7 +176,7 @@ def home():
 
 # ========== ЗАПУСК ==========
 def run_webhook():
-    global telegram_app
+    global telegram_app, main_loop
     
     telegram_app = Application.builder().token(TOKEN).build()
     
@@ -185,14 +195,24 @@ def run_webhook():
     telegram_app.add_handler(CallbackQueryHandler(lambda u,c: None, pattern="^cancel$"))
     telegram_app.add_handler(conv_handler)
     
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(telegram_app.initialize())
-    loop.run_until_complete(telegram_app.start())
+    # Создаём единый event loop
+    main_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(main_loop)
+    main_loop.run_until_complete(telegram_app.initialize())
+    main_loop.run_until_complete(telegram_app.start())
     
     port = int(os.environ.get("PORT", 8080))
     print(f"✅ Бот запущен на порту {port}")
-    flask_app.run(host='0.0.0.0', port=port)
+    
+    # Запускаем Flask в отдельном потоке с тем же loop
+    def run_flask():
+        flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    
+    import threading
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Держим loop активным
+    main_loop.run_forever()
 
 if __name__ == '__main__':
     run_webhook()
