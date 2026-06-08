@@ -49,7 +49,6 @@ def get_available_orders():
 
 def update_order(row, data):
     sheet = get_worksheet()
-    # Исправлен порядок аргументов (убрано предупреждение)
     sheet.update(values=[[data['cost']]], range_name=f'G{row}')
     sheet.update(values=[[data['delivery']]], range_name=f'H{row}')
     sheet.update(values=[[data['expense']]], range_name=f'I{row}')
@@ -142,6 +141,8 @@ async def get_expense(update, context):
         await update.message.reply_text(f"✅ Отчёт сохранён! Сумма {context.user_data['cost']}, выезд {context.user_data['delivery']}, расходы {expense} записаны в строку {row}.")
         
         context.user_data.clear()
+        
+        # Принудительное завершение диалога
         return ConversationHandler.END
     except ValueError:
         await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
