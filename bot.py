@@ -19,7 +19,11 @@ flask_app = Flask(__name__)
 telegram_app = None
 main_loop = None
 
-COST, DELIVERY, EXPENSE = range(3)
+# Состояния разговора
+STATUS, COST, DELIVERY, EXPENSE, CONFIRM = range(5)
+
+# Статусы
+STATUS_OPTIONS = ["✅ Выполнена", "❌ Отказ", "🔄 Перенаправлена"]
 
 # ========== GOOGLE SHEETS ==========
 def get_worksheet():
@@ -52,6 +56,7 @@ def update_order(row, data):
     sheet.update(values=[[data['cost']]], range_name=f'G{row}')
     sheet.update(values=[[data['delivery']]], range_name=f'H{row}')
     sheet.update(values=[[data['expense']]], range_name=f'I{row}')
+    sheet.update(values=[[data['status']]], range_name=f'O{row}')
 
 # ========== КОМАНДЫ ==========
 async def start(update, context):
@@ -62,7 +67,6 @@ async def start(update, context):
     )
 
 async def show_orders_or_empty(update, context, message_prefix=None):
-    """Показывает список заявок или сообщение об отсутствии с кнопкой Проверить"""
     orders = get_available_orders()
     
     if orders:
@@ -90,13 +94,11 @@ async def show_orders_or_empty(update, context, message_prefix=None):
 async def new_report_callback(update, context):
     query = update.callback_query
     await query.answer()
-    
     await show_orders_or_empty(query, context)
 
 async def check_orders_callback(update, context):
     query = update.callback_query
     await query.answer()
-    
     await show_orders_or_empty(query, context)
 
 async def cancel_callback(update, context):
@@ -113,12 +115,9 @@ async def select_order_callback(update, context):
         await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
         return ConversationHandler.END
     
-    # Очищаем данные предыдущего диалога
     context.user_data.clear()
-    
     row = int(query.data.split('_')[1])
     
-    # Находим заявку по номеру строки
     orders = get_available_orders()
     order = next((o for o in orders if o['row'] == row), None)
     if not order:
@@ -130,8 +129,36 @@ async def select_order_callback(update, context):
     context.user_data['order_client'] = order['client']
     context.user_data['order_address'] = order['address']
     
-    await query.edit_message_text("Введите сумму заказа (только цифры):")
-    return COST
+    # Запрашиваем статус
+    keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+    
+    await query.edit_message_text(
+        f"📋 Заявка: {order['id']} - {order['client']} - {order['address']}\n\nУкажите статус заявки:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return STATUS
+
+async def status_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "cancel":
+        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        return ConversationHandler.END
+    
+    status = query.data.split('_')[1]
+    context.user_data['status'] = status
+    
+    if status == "✅ Выполнена":
+        await query.edit_message_text("Введите сумму заказа (только цифры):")
+        return COST
+    else:
+        # Отказ или Перенаправлена: сумма и расходы = 0, запрашиваем только выезд
+        context.user_data['cost'] = 0
+        context.user_data['expense'] = 0
+        await query.edit_message_text("Введите стоимость выезда/доставки (только цифры):")
+        return DELIVERY
 
 async def get_cost(update, context):
     try:
@@ -151,8 +178,14 @@ async def get_delivery(update, context):
         if delivery < 0:
             raise ValueError
         context.user_data['delivery'] = delivery
-        await update.message.reply_text("Введите расходы (только цифры):")
-        return EXPENSE
+        
+        # Если статус "Выполнена" — запрашиваем расходы
+        if context.user_data['status'] == "✅ Выполнена":
+            await update.message.reply_text("Введите расходы (только цифры):")
+            return EXPENSE
+        else:
+            # Отказ или Перенаправлена — переходим к подтверждению
+            return await show_confirmation(update, context)
     except ValueError:
         await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
         return DELIVERY
@@ -163,33 +196,85 @@ async def get_expense(update, context):
         if expense < 0:
             raise ValueError
         context.user_data['expense'] = expense
-        
-        row = context.user_data['row']
-        update_order(row, context.user_data)
-        
-        # Формируем сообщение об успешном сохранении
-        success_message = (
-            f"✅ Вы сохранили отчёт по заявке:\n"
-            f"📋 ID: {context.user_data['order_id']}\n"
-            f"🏢 Клиент: {context.user_data['order_client']}\n"
-            f"📍 Адрес: {context.user_data['order_address']}\n\n"
-            f"💰 Сумма: {context.user_data['cost']} руб\n"
-            f"🚚 Выезд/доставка: {context.user_data['delivery']} руб\n"
-            f"📦 Расходы: {expense} руб"
-        )
-        
-        await update.message.reply_text(success_message)
-        
-        # Очищаем данные
-        context.user_data.clear()
-        
-        # После успешного сохранения показываем список заявок
-        await show_orders_or_empty(update, context, "📊 Отчёт сохранён!")
-        
-        return ConversationHandler.END
+        return await show_confirmation(update, context)
     except ValueError:
         await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
         return EXPENSE
+
+async def show_confirmation(update, context):
+    data = context.user_data
+    status = data['status']
+    
+    text = (
+        f"📋 **Проверьте данные:**\n\n"
+        f"Заявка: {data['order_id']} - {data['order_client']} - {data['order_address']}\n"
+        f"📌 Статус: {status}\n"
+        f"💰 Сумма: {data['cost']} руб\n"
+        f"🚚 Выезд/доставка: {data['delivery']} руб\n"
+        f"📦 Расходы: {data['expense']} руб\n\n"
+        f"Всё верно?"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Да, всё верно", callback_data="confirm_yes")],
+        [InlineKeyboardButton("✏️ Нет, заполнить заново", callback_data="confirm_no")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel")]
+    ]
+    
+    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    return CONFIRM
+
+async def confirm_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "cancel":
+        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        return ConversationHandler.END
+    
+    if query.data == "confirm_no":
+        # Возвращаемся к выбору статуса
+        keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+        
+        await query.edit_message_text(
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n\nУкажите статус заявки:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return STATUS
+    
+    # confirm_yes — сохраняем в таблицу
+    data = context.user_data
+    row = data['row']
+    
+    # Сохраняем статус в столбец O
+    status_value = data['status'].replace('✅ ', '').replace('❌ ', '').replace('🔄 ', '')
+    
+    update_order(row, {
+        'cost': data['cost'],
+        'delivery': data['delivery'],
+        'expense': data['expense'],
+        'status': status_value
+    })
+    
+    success_message = (
+        f"✅ Вы сохранили отчёт по заявке:\n"
+        f"📋 ID: {data['order_id']}\n"
+        f"🏢 Клиент: {data['order_client']}\n"
+        f"📍 Адрес: {data['order_address']}\n\n"
+        f"📌 Статус: {data['status']}\n"
+        f"💰 Сумма: {data['cost']} руб\n"
+        f"🚚 Выезд/доставка: {data['delivery']} руб\n"
+        f"📦 Расходы: {data['expense']} руб"
+    )
+    
+    await query.edit_message_text(success_message)
+    
+    context.user_data.clear()
+    
+    await show_orders_or_empty(query, context, "📊 Отчёт сохранён!")
+    
+    return ConversationHandler.END
 
 async def cancel(update, context):
     context.user_data.clear()
@@ -227,9 +312,11 @@ def run_webhook():
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(select_order_callback, pattern="^order_")],
         states={
+            STATUS: [CallbackQueryHandler(status_callback, pattern="^(status_|cancel)")],
             COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_cost)],
             DELIVERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_delivery)],
             EXPENSE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_expense)],
+            CONFIRM: [CallbackQueryHandler(confirm_callback, pattern="^(confirm_yes|confirm_no|cancel)")],
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
