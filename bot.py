@@ -262,10 +262,7 @@ async def confirm_callback(update, context):
         'status': status_value
     })
     
-    # Сначала редактируем исходное сообщение, чтобы убрать кнопки
-    await query.edit_message_text("✅ Отчёт сохраняется...")
-    
-    # Отправляем сообщение об успехе
+    # Показываем сообщение об успехе
     success_message = (
         f"✅ Вы сохранили отчёт по заявке:\n"
         f"📋 ID: {data['order_id']}\n"
@@ -275,13 +272,20 @@ async def confirm_callback(update, context):
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
         f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб"
     )
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=success_message)
+    await query.edit_message_text(success_message)
+    
+    # Небольшая задержка, чтобы пользователь успел прочитать
+    await asyncio.sleep(2)
     
     # Полный сброс состояния
     context.user_data.clear()
     
-    # Отправляем новый список заявок
-    await show_orders_or_empty(query, context, "📊 Отчёт сохранён!")
+    # Отправляем кнопку для нового отчёта
+    keyboard = [[InlineKeyboardButton("📋 Создать новый отчёт", callback_data="new_report")]]
+    await query.edit_message_text(
+        "Что дальше?",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # ========== ВЕБХУК ==========
 @flask_app.route('/webhook', methods=['POST'])
