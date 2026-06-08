@@ -3,7 +3,7 @@ import asyncio
 import json
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -18,8 +18,6 @@ SHEET_NAME = "Сергей Олегович"
 flask_app = Flask(__name__)
 telegram_app = None
 main_loop = None
-
-STATUS, COST, DELIVERY, EXPENSE, CONFIRM = range(5)
 
 STATUS_OPTIONS = ["✅ Выполнена", "❌ Отказ", "🔄 Перенаправлена"]
 
@@ -78,7 +76,10 @@ async def show_orders_or_empty(update, context, message_prefix=None):
         if message_prefix:
             text = f"{message_prefix}\n\n{text}"
         
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        if isinstance(update, Update):
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await update.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         keyboard = [[InlineKeyboardButton("🔄 Проверить", callback_data="check_orders")]]
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
@@ -87,21 +88,16 @@ async def show_orders_or_empty(update, context, message_prefix=None):
         if message_prefix:
             text = f"{message_prefix}\n\n{text}"
         
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        if isinstance(update, Update):
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await update.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def new_report_callback(update, context):
     query = update.callback_query
     await query.answer()
-    
-    # Сброс данных
+    # Полный сброс состояния
     context.user_data.clear()
-    
-    # Принудительный сброс диалога перед началом нового
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    if context.application.conversation_handler:
-        context.application.conversation_handler._conversations.pop((user_id, chat_id), None)
-    
     await show_orders_or_empty(query, context)
 
 async def check_orders_callback(update, context):
@@ -112,26 +108,20 @@ async def check_orders_callback(update, context):
 async def cancel_callback(update, context):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+    # Полный сброс состояния
     context.user_data.clear()
-    
-    # Принудительный сброс диалога
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    if context.application.conversation_handler:
-        context.application.conversation_handler._conversations.pop((user_id, chat_id), None)
-    
-    return ConversationHandler.END
+    await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
 
 async def select_order_callback(update, context):
     query = update.callback_query
     await query.answer()
     
     if query.data == "cancel":
-        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
         context.user_data.clear()
-        return ConversationHandler.END
+        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        return
     
+    # Сброс предыдущего состояния
     context.user_data.clear()
     row = int(query.data.split('_')[1])
     
@@ -139,8 +129,9 @@ async def select_order_callback(update, context):
     order = next((o for o in orders if o['row'] == row), None)
     if not order:
         await query.edit_message_text("❌ Ошибка: заявка не найдена. Возможно, статус изменился.")
-        return ConversationHandler.END
+        return
     
+    context.user_data['step'] = 'status'
     context.user_data['row'] = row
     context.user_data['order_id'] = order['id']
     context.user_data['order_client'] = order['client']
@@ -153,67 +144,70 @@ async def select_order_callback(update, context):
         f"📋 Заявка: {order['id']} - {order['client']} - {order['address']}\n\nУкажите статус заявки:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    return STATUS
 
 async def status_callback(update, context):
     query = update.callback_query
     await query.answer()
     
     if query.data == "cancel":
-        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
         context.user_data.clear()
-        return ConversationHandler.END
+        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        return
     
     status = query.data.split('_')[1]
     context.user_data['status'] = status
     
     if status == "✅ Выполнена":
+        context.user_data['step'] = 'cost'
         await query.edit_message_text("Введите сумму заказа (только цифры):")
-        return COST
     else:
+        context.user_data['step'] = 'delivery'
         await query.edit_message_text("Введите сумму выезда/доставки (только цифры):")
-        return DELIVERY
 
-async def get_cost(update, context):
-    try:
-        cost = int(update.message.text.strip())
-        if cost < 0:
-            raise ValueError
-        context.user_data['cost'] = cost
-        await update.message.reply_text("Введите сумму выезда/доставки (только цифры):")
-        return DELIVERY
-    except ValueError:
-        await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
-        return COST
-
-async def get_delivery(update, context):
-    try:
-        delivery = int(update.message.text.strip())
-        if delivery < 0:
-            raise ValueError
-        context.user_data['delivery'] = delivery
-        
-        if context.user_data['status'] == "✅ Выполнена":
-            await update.message.reply_text("Введите расходы (только цифры):")
-            return EXPENSE
-        else:
-            context.user_data['cost'] = delivery
-            context.user_data['expense'] = 0
-            return await show_confirmation(update, context)
-    except ValueError:
-        await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
-        return DELIVERY
-
-async def get_expense(update, context):
-    try:
-        expense = int(update.message.text.strip())
-        if expense < 0:
-            raise ValueError
-        context.user_data['expense'] = expense
-        return await show_confirmation(update, context)
-    except ValueError:
-        await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
-        return EXPENSE
+async def handle_text(update, context):
+    step = context.user_data.get('step')
+    
+    if step == 'cost':
+        try:
+            cost = int(update.message.text.strip())
+            if cost < 0:
+                raise ValueError
+            context.user_data['cost'] = cost
+            context.user_data['step'] = 'delivery'
+            await update.message.reply_text("Введите сумму выезда/доставки (только цифры):")
+        except ValueError:
+            await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
+    
+    elif step == 'delivery':
+        try:
+            delivery = int(update.message.text.strip())
+            if delivery < 0:
+                raise ValueError
+            context.user_data['delivery'] = delivery
+            
+            if context.user_data.get('status') == "✅ Выполнена":
+                context.user_data['step'] = 'expense'
+                await update.message.reply_text("Введите расходы (только цифры):")
+            else:
+                # Отказ или Перенаправлена
+                context.user_data['cost'] = delivery
+                context.user_data['expense'] = 0
+                await show_confirmation(update, context)
+        except ValueError:
+            await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
+    
+    elif step == 'expense':
+        try:
+            expense = int(update.message.text.strip())
+            if expense < 0:
+                raise ValueError
+            context.user_data['expense'] = expense
+            await show_confirmation(update, context)
+        except ValueError:
+            await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
+    
+    else:
+        await update.message.reply_text("Начните с /start")
 
 async def show_confirmation(update, context):
     data = context.user_data
@@ -234,39 +228,32 @@ async def show_confirmation(update, context):
         [InlineKeyboardButton("❌ Отмена", callback_data="cancel")]
     ]
     
+    context.user_data['step'] = 'confirm'
     await update.message.reply_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-    return CONFIRM
 
 async def confirm_callback(update, context):
     query = update.callback_query
     await query.answer()
     
     if query.data == "cancel":
-        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
         context.user_data.clear()
-        
-        # Принудительный сброс диалога
-        user_id = update.effective_user.id
-        chat_id = update.effective_chat.id
-        if context.application.conversation_handler:
-            context.application.conversation_handler._conversations.pop((user_id, chat_id), None)
-        
-        return ConversationHandler.END
+        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        return
     
     if query.data == "confirm_no":
+        # Возвращаемся к выбору статуса
         keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
-        
+        context.user_data['step'] = 'status'
         await query.edit_message_text(
             f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n\nУкажите статус заявки:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return STATUS
+        return
     
     # confirm_yes
     data = context.user_data
     row = data['row']
-    
     status_value = data['status'].replace('✅ ', '').replace('❌ ', '').replace('🔄 ', '')
     
     update_order(row, {
@@ -288,22 +275,9 @@ async def confirm_callback(update, context):
     
     await query.edit_message_text(success_message)
     
+    # Полный сброс и показ списка заявок
     context.user_data.clear()
-    
-    # Принудительный сброс диалога после сохранения
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    if context.application.conversation_handler:
-        context.application.conversation_handler._conversations.pop((user_id, chat_id), None)
-    
     await show_orders_or_empty(query, context, "📊 Отчёт сохранён!")
-    
-    return ConversationHandler.END
-
-async def cancel(update, context):
-    context.user_data.clear()
-    await update.message.reply_text("❌ Отменено. Для создания нового отчёта нажмите /start")
-    return ConversationHandler.END
 
 # ========== ВЕБХУК ==========
 @flask_app.route('/webhook', methods=['POST'])
@@ -312,12 +286,10 @@ def webhook():
     try:
         data = request.get_json()
         update = Update.de_json(data, telegram_app.bot)
-        
         asyncio.run_coroutine_threadsafe(
             telegram_app.process_update(update),
             main_loop
         )
-        
         return "OK", 200
     except Exception as e:
         print(f"❌ Ошибка: {e}")
@@ -333,23 +305,14 @@ def run_webhook():
     
     telegram_app = Application.builder().token(TOKEN).build()
     
-    conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(select_order_callback, pattern="^order_")],
-        states={
-            STATUS: [CallbackQueryHandler(status_callback, pattern="^(status_|cancel)")],
-            COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_cost)],
-            DELIVERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_delivery)],
-            EXPENSE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_expense)],
-            CONFIRM: [CallbackQueryHandler(confirm_callback, pattern="^(confirm_yes|confirm_no|cancel)")],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-    
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
     telegram_app.add_handler(CallbackQueryHandler(check_orders_callback, pattern="^check_orders$"))
     telegram_app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
-    telegram_app.add_handler(conv_handler)
+    telegram_app.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
+    telegram_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
+    telegram_app.add_handler(CallbackQueryHandler(confirm_callback, pattern="^confirm_"))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     main_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(main_loop)
