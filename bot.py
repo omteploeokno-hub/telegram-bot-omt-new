@@ -108,10 +108,13 @@ async def check_orders_callback(update, context):
     await show_orders_or_empty(query, context)
 
 async def cancel_callback(update, context):
-    query = update.callback_query
-    await query.answer()
     context.user_data.clear()
-    await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+    else:
+        await update.message.reply_text("❌ Отменено. Для создания нового отчёта нажмите /start")
 
 async def select_order_callback(update, context):
     query = update.callback_query
