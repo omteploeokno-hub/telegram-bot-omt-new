@@ -378,6 +378,7 @@ def run_webhook():
     init_db()
     
     telegram_app = Application.builder().token(TOKEN).build()
+    telegram_app.initialize()
     
     # Добавляем обработчики
     telegram_app.add_handler(CommandHandler("start", start))
