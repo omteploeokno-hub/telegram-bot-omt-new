@@ -93,8 +93,12 @@ async def new_report_callback(update, context):
     query = update.callback_query
     await query.answer()
     
-    # Просто очищаем данные
+    # Полный сброс данных и диалога
     context.user_data.clear()
+    
+    # Завершаем текущий диалог, если он есть
+    if context._dispatcher and context._dispatcher.has_conversation(update.effective_user.id, update.effective_chat.id):
+        await context._dispatcher.conversation_handler._conversations.clear()
     
     await show_orders_or_empty(query, context)
 
@@ -108,6 +112,11 @@ async def cancel_callback(update, context):
     await query.answer()
     await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
     context.user_data.clear()
+    
+    # Завершаем текущий диалог
+    if context._dispatcher and context._dispatcher.has_conversation(update.effective_user.id, update.effective_chat.id):
+        await context._dispatcher.conversation_handler._conversations.clear()
+    
     return ConversationHandler.END
 
 async def select_order_callback(update, context):
@@ -117,9 +126,18 @@ async def select_order_callback(update, context):
     if query.data == "cancel":
         await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
         context.user_data.clear()
+        
+        if context._dispatcher and context._dispatcher.has_conversation(update.effective_user.id, update.effective_chat.id):
+            await context._dispatcher.conversation_handler._conversations.clear()
+        
         return ConversationHandler.END
     
+    # Принудительно завершаем старый диалог перед началом нового
     context.user_data.clear()
+    
+    if context._dispatcher and context._dispatcher.has_conversation(update.effective_user.id, update.effective_chat.id):
+        await context._dispatcher.conversation_handler._conversations.clear()
+    
     row = int(query.data.split('_')[1])
     
     orders = get_available_orders()
@@ -149,6 +167,10 @@ async def status_callback(update, context):
     if query.data == "cancel":
         await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
         context.user_data.clear()
+        
+        if context._dispatcher and context._dispatcher.has_conversation(update.effective_user.id, update.effective_chat.id):
+            await context._dispatcher.conversation_handler._conversations.clear()
+        
         return ConversationHandler.END
     
     status = query.data.split('_')[1]
@@ -158,7 +180,6 @@ async def status_callback(update, context):
         await query.edit_message_text("Введите сумму заказа (только цифры):")
         return COST
     else:
-        # Отказ или Перенаправлена: сумма = выезду, расходы = 0
         await query.edit_message_text("Введите сумму выезда/доставки (только цифры):")
         return DELIVERY
 
@@ -185,7 +206,6 @@ async def get_delivery(update, context):
             await update.message.reply_text("Введите расходы (только цифры):")
             return EXPENSE
         else:
-            # Отказ или Перенаправлена: сумма = выезду, расходы = 0
             context.user_data['cost'] = delivery
             context.user_data['expense'] = 0
             return await show_confirmation(update, context)
@@ -233,6 +253,10 @@ async def confirm_callback(update, context):
     if query.data == "cancel":
         await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
         context.user_data.clear()
+        
+        if context._dispatcher and context._dispatcher.has_conversation(update.effective_user.id, update.effective_chat.id):
+            await context._dispatcher.conversation_handler._conversations.clear()
+        
         return ConversationHandler.END
     
     if query.data == "confirm_no":
@@ -271,6 +295,9 @@ async def confirm_callback(update, context):
     await query.edit_message_text(success_message)
     
     context.user_data.clear()
+    
+    if context._dispatcher and context._dispatcher.has_conversation(update.effective_user.id, update.effective_chat.id):
+        await context._dispatcher.conversation_handler._conversations.clear()
     
     await show_orders_or_empty(query, context, "📊 Отчёт сохранён!")
     
