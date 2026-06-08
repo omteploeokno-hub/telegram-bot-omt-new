@@ -342,14 +342,23 @@ async def back_to_form(update: Update, context):
 
 # ========== ЗАПУСК ==========
 def main():
+    import asyncio
+    import requests
+    
     init_db()
     
     # Удаляем вебхук на всякий случай
-    import requests
     requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook")
     
+    # Создаём приложение
     app = Application.builder().token(TOKEN).build()
     
+    # ⬇️ ВАЖНО: инициализируем приложение асинхронно
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(app.initialize())
+    
+    # Добавляем обработчики
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("new", new_report))
     app.add_handler(CallbackQueryHandler(select_order, pattern="^(order_|prev_page|next_page|cancel)$"))
@@ -366,6 +375,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_comment_input))
     
     print("✅ Бот запущен (polling mode)...")
+    
+    # Запускаем polling с инициализированным приложением
     app.run_polling()
 
 if __name__ == '__main__':
