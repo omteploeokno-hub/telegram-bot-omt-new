@@ -40,7 +40,7 @@ def write_to_google_sheets():
         sheet = client.open(SPREADSHEET_NAME).worksheet(SHEET_NAME)
         
         # Записываем 1000 в ячейку G2
-        sheet.update('G2', 1000)
+        sheet.update('G2', [[1000]])
         print("✅ Записано 1000 в G2")
         return True
     except Exception as e:
