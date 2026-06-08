@@ -183,16 +183,27 @@ async def handle_date_input(update, context):
     if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', date_str):
         await update.message.reply_text(
             "❌ Неверный формат. Введите дату в формате ДД.ММ.ГГГГ\n"
-            "Например: 15.06.2026"
+            "Например: 15.06.2026\n\n"
+            "Попробуйте ещё раз:"
         )
         return
     
     try:
-        datetime.strptime(date_str, "%d.%m.%Y")
+        input_date = datetime.strptime(date_str, "%d.%m.%Y")
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        if input_date > today:
+            await update.message.reply_text(
+                f"❌ Дата {date_str} находится в будущем.\n"
+                f"Сегодня: {today.strftime('%d.%m.%Y')}\n\n"
+                "Пожалуйста, введите корректную дату (сегодня или ранее):"
+            )
+            return
+        
         context.user_data['date'] = date_str
         await proceed_to_status(update, context)
     except ValueError:
-        await update.message.reply_text("❌ Неверная дата. Проверьте день и месяц.")
+        await update.message.reply_text("❌ Неверная дата. Проверьте день и месяц.\n\nПопробуйте ещё раз:")
 
 async def proceed_to_status(update, context):
     context.user_data['step'] = 'status'
