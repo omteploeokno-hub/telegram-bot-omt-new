@@ -61,32 +61,48 @@ async def start(update, context):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+async def show_orders_or_empty(update, context, message_prefix=None):
+    """Показывает список заявок или сообщение об отсутствии с кнопкой Проверить"""
+    orders = get_available_orders()
+    
+    if orders:
+        keyboard = []
+        for order in orders:
+            text = f"{order['id']} - {order['client']} - {order['address']}"
+            keyboard.append([InlineKeyboardButton(text, callback_data=f"order_{order['row']}")])
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+        
+        text = "📋 Выберите заявку:"
+        if message_prefix:
+            text = f"{message_prefix}\n\n{text}"
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        keyboard = [[InlineKeyboardButton("🔄 Проверить", callback_data="check_orders")]]
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+        
+        text = "❌ Нет доступных заявок со статусом «В работе».\nНажмите «Проверить», чтобы обновить список."
+        if message_prefix:
+            text = f"{message_prefix}\n\n{text}"
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
 async def new_report_callback(update, context):
     query = update.callback_query
     await query.answer()
     
-    orders = get_available_orders()
+    await show_orders_or_empty(query, context)
+
+async def check_orders_callback(update, context):
+    query = update.callback_query
+    await query.answer()
     
-    if not orders:
-        await query.edit_message_text("❌ Нет доступных заявок со статусом «В работе».")
-        return
-    
-    keyboard = []
-    for order in orders:
-        text = f"{order['id']} - {order['client']} - {order['address']}"
-        keyboard.append([InlineKeyboardButton(text, callback_data=f"order_{order['row']}")])
-    
-    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
-    
-    await query.edit_message_text(
-        "📋 Выберите заявку:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await show_orders_or_empty(query, context)
 
 async def cancel_callback(update, context):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("❌ Отменено. Для нового отчёта нажмите /start")
+    await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
     return ConversationHandler.END
 
 async def select_order_callback(update, context):
@@ -94,12 +110,25 @@ async def select_order_callback(update, context):
     await query.answer()
     
     if query.data == "cancel":
-        await query.edit_message_text("❌ Отменено. Для нового отчёта нажмите /start")
+        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
         return ConversationHandler.END
     
+    # Очищаем данные предыдущего диалога
     context.user_data.clear()
+    
     row = int(query.data.split('_')[1])
+    
+    # Находим заявку по номеру строки
+    orders = get_available_orders()
+    order = next((o for o in orders if o['row'] == row), None)
+    if not order:
+        await query.edit_message_text("❌ Ошибка: заявка не найдена. Возможно, статус изменился.")
+        return ConversationHandler.END
+    
     context.user_data['row'] = row
+    context.user_data['order_id'] = order['id']
+    context.user_data['order_client'] = order['client']
+    context.user_data['order_address'] = order['address']
     
     await query.edit_message_text("Введите сумму заказа (только цифры):")
     return COST
@@ -138,11 +167,25 @@ async def get_expense(update, context):
         row = context.user_data['row']
         update_order(row, context.user_data)
         
-        await update.message.reply_text(f"✅ Отчёт сохранён! Сумма {context.user_data['cost']}, выезд {context.user_data['delivery']}, расходы {expense} записаны в строку {row}.")
+        # Формируем сообщение об успешном сохранении
+        success_message = (
+            f"✅ Вы сохранили отчёт по заявке:\n"
+            f"📋 ID: {context.user_data['order_id']}\n"
+            f"🏢 Клиент: {context.user_data['order_client']}\n"
+            f"📍 Адрес: {context.user_data['order_address']}\n\n"
+            f"💰 Сумма: {context.user_data['cost']} руб\n"
+            f"🚚 Выезд/доставка: {context.user_data['delivery']} руб\n"
+            f"📦 Расходы: {expense} руб"
+        )
         
+        await update.message.reply_text(success_message)
+        
+        # Очищаем данные
         context.user_data.clear()
         
-        # Принудительное завершение диалога
+        # После успешного сохранения показываем список заявок
+        await show_orders_or_empty(update, context, "📊 Отчёт сохранён!")
+        
         return ConversationHandler.END
     except ValueError:
         await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
@@ -150,7 +193,7 @@ async def get_expense(update, context):
 
 async def cancel(update, context):
     context.user_data.clear()
-    await update.message.reply_text("❌ Отменено. Для нового отчёта нажмите /start")
+    await update.message.reply_text("❌ Отменено. Для создания нового отчёта нажмите /start")
     return ConversationHandler.END
 
 # ========== ВЕБХУК ==========
@@ -193,6 +236,7 @@ def run_webhook():
     
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
+    telegram_app.add_handler(CallbackQueryHandler(check_orders_callback, pattern="^check_orders$"))
     telegram_app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
     telegram_app.add_handler(conv_handler)
     
