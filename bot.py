@@ -1,6 +1,7 @@
 import os
 import asyncio
 import json
+from datetime import datetime
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
@@ -53,6 +54,7 @@ def update_order(row, data):
     sheet.update(values=[[data['delivery']]], range_name=f'H{row}')
     sheet.update(values=[[data['expense']]], range_name=f'I{row}')
     sheet.update(values=[[data['status']]], range_name=f'O{row}')
+    sheet.update(values=[[data['date']]], range_name=f'D{row}')
 
 # ========== КОМАНДЫ ==========
 async def start(update, context):
@@ -96,7 +98,6 @@ async def show_orders_or_empty(update, context, message_prefix=None):
 async def new_report_callback(update, context):
     query = update.callback_query
     await query.answer()
-    # Полный сброс состояния
     context.user_data.clear()
     await show_orders_or_empty(query, context)
 
@@ -108,7 +109,6 @@ async def check_orders_callback(update, context):
 async def cancel_callback(update, context):
     query = update.callback_query
     await query.answer()
-    # Полный сброс состояния
     context.user_data.clear()
     await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
 
@@ -121,7 +121,6 @@ async def select_order_callback(update, context):
         await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
         return
     
-    # Сброс предыдущего состояния
     context.user_data.clear()
     row = int(query.data.split('_')[1])
     
@@ -131,19 +130,78 @@ async def select_order_callback(update, context):
         await query.edit_message_text("❌ Ошибка: заявка не найдена. Возможно, статус изменился.")
         return
     
-    context.user_data['step'] = 'status'
     context.user_data['row'] = row
     context.user_data['order_id'] = order['id']
     context.user_data['order_client'] = order['client']
     context.user_data['order_address'] = order['address']
+    context.user_data['step'] = 'date'
+    
+    keyboard = [
+        [InlineKeyboardButton("📅 Сегодня", callback_data="date_today")],
+        [InlineKeyboardButton("📆 Указать другую дату", callback_data="date_other")]
+    ]
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+    
+    await query.edit_message_text(
+        f"📋 Заявка: {order['id']} - {order['client']} - {order['address']}\n\nУкажите дату выполнения:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def date_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "cancel":
+        context.user_data.clear()
+        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        return
+    
+    if query.data == "date_today":
+        today = datetime.now().strftime("%d.%m.%Y")
+        context.user_data['date'] = today
+        await proceed_to_status(update, context)
+    
+    elif query.data == "date_other":
+        context.user_data['step'] = 'waiting_date'
+        await query.edit_message_text(
+            "Введите дату в формате ДД.ММ.ГГГГ\n"
+            "Например: 15.06.2026\n\n"
+            "❌ Для отмены нажмите /cancel"
+        )
+
+async def handle_date_input(update, context):
+    if context.user_data.get('step') != 'waiting_date':
+        return
+    
+    date_str = update.message.text.strip()
+    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', date_str):
+        await update.message.reply_text(
+            "❌ Неверный формат. Введите дату в формате ДД.ММ.ГГГГ\n"
+            "Например: 15.06.2026"
+        )
+        return
+    
+    try:
+        datetime.strptime(date_str, "%d.%m.%Y")
+        context.user_data['date'] = date_str
+        await update.message.reply_text(f"✅ Дата установлена: {date_str}")
+        await proceed_to_status(update, context)
+    except ValueError:
+        await update.message.reply_text("❌ Неверная дата. Проверьте день и месяц.")
+
+async def proceed_to_status(update, context):
+    query = update.callback_query if hasattr(update, 'callback_query') else update
+    context.user_data['step'] = 'status'
     
     keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     
-    await query.edit_message_text(
-        f"📋 Заявка: {order['id']} - {order['client']} - {order['address']}\n\nУкажите статус заявки:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    text = f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата: {context.user_data['date']}\n\nУкажите статус заявки:"
+    
+    if hasattr(update, 'callback_query'):
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def status_callback(update, context):
     query = update.callback_query
@@ -167,6 +225,10 @@ async def status_callback(update, context):
 async def handle_text(update, context):
     step = context.user_data.get('step')
     
+    if step == 'waiting_date':
+        await handle_date_input(update, context)
+        return
+    
     if step == 'cost':
         try:
             cost = int(update.message.text.strip())
@@ -189,7 +251,6 @@ async def handle_text(update, context):
                 context.user_data['step'] = 'expense'
                 await update.message.reply_text("Введите расходы (только цифры):")
             else:
-                # Отказ или Перенаправлена
                 context.user_data['cost'] = delivery
                 context.user_data['expense'] = 0
                 await show_confirmation(update, context)
@@ -216,6 +277,7 @@ async def show_confirmation(update, context):
     text = (
         f"📋 **Проверьте данные:**\n\n"
         f"Заявка: {data['order_id']} - {data['order_client']} - {data['order_address']}\n"
+        f"📅 Дата: {data['date']}\n"
         f"📌 Статус: {status}\n"
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
         f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб\n\n"
@@ -244,7 +306,7 @@ async def confirm_callback(update, context):
         keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         await query.edit_message_text(
-            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n\nУкажите статус заявки:",
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата: {context.user_data['date']}\n\nУкажите статус заявки:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         context.user_data['step'] = 'status'
@@ -259,28 +321,26 @@ async def confirm_callback(update, context):
         'cost': data['cost'],
         'delivery': data['delivery'],
         'expense': data['expense'],
-        'status': status_value
+        'status': status_value,
+        'date': data['date']
     })
     
-    # Показываем сообщение об успехе
     success_message = (
         f"✅ Вы сохранили отчёт по заявке:\n"
         f"📋 ID: {data['order_id']}\n"
         f"🏢 Клиент: {data['order_client']}\n"
         f"📍 Адрес: {data['order_address']}\n\n"
+        f"📅 Дата: {data['date']}\n"
         f"📌 Статус: {data['status']}\n"
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
         f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб"
     )
     await query.edit_message_text(success_message)
     
-    # Небольшая задержка, чтобы пользователь успел прочитать
     await asyncio.sleep(2)
     
-    # Полный сброс состояния
     context.user_data.clear()
     
-    # Отправляем кнопку для нового отчёта
     keyboard = [[InlineKeyboardButton("📋 Создать новый отчёт", callback_data="new_report")]]
     await query.edit_message_text(
         "Что дальше?",
@@ -314,10 +374,12 @@ def run_webhook():
     telegram_app = Application.builder().token(TOKEN).build()
     
     telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("cancel", cancel_callback))
     telegram_app.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
     telegram_app.add_handler(CallbackQueryHandler(check_orders_callback, pattern="^check_orders$"))
     telegram_app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
     telegram_app.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
+    telegram_app.add_handler(CallbackQueryHandler(date_callback, pattern="^date_"))
     telegram_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
     telegram_app.add_handler(CallbackQueryHandler(confirm_callback, pattern="^confirm_"))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
