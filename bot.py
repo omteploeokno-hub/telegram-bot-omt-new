@@ -129,12 +129,16 @@ async def go_back(update, context):
     
     step = context.user_data.get('step')
     
+    # Убеждаемся, что данные заявки не потеряны
+    if 'order_id' not in context.user_data:
+        await query.edit_message_text("❌ Ошибка: данные заявки утеряны. Начните с /start")
+        context.user_data.clear()
+        return
+    
     if step == 'date':
-        # Возврат к выбору заявки
         await show_orders_or_empty(query, context)
     
     elif step == 'waiting_date':
-        # Возврат к выбору даты
         context.user_data['step'] = 'date'
         keyboard = [
             [InlineKeyboardButton("📅 Сегодня", callback_data="date_today")],
@@ -149,7 +153,6 @@ async def go_back(update, context):
         )
     
     elif step == 'status':
-        # Возврат к выбору даты
         context.user_data['step'] = 'date'
         keyboard = [
             [InlineKeyboardButton("📅 Сегодня", callback_data="date_today")],
@@ -164,7 +167,6 @@ async def go_back(update, context):
         )
     
     elif step in ['cost', 'delivery', 'expense']:
-        # Возврат к выбору статуса
         context.user_data['step'] = 'status'
         keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
@@ -176,17 +178,23 @@ async def go_back(update, context):
         )
     
     elif step == 'waiting_comment':
-        # Возврат к вводу расходов или выезда
         status = context.user_data.get('status')
         if status == "✅ Выполнена":
             context.user_data['step'] = 'expense'
-            await query.edit_message_text("Введите расходы (только цифры):")
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+            await query.edit_message_text(
+                "Введите расходы (только цифры):",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
         else:
             context.user_data['step'] = 'delivery'
-            await query.edit_message_text("Введите сумму выезда/доставки (только цифры):")
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+            await query.edit_message_text(
+                "Введите сумму выезда/доставки (только цифры):",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
     
     elif step == 'confirm':
-        # Возврат к вводу комментария
         await proceed_to_comment(update, context)
     
     else:
