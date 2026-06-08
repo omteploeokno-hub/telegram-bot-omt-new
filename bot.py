@@ -193,7 +193,6 @@ async def handle_date_input(update, context):
         await update.message.reply_text("❌ Неверная дата. Проверьте день и месяц.")
 
 async def proceed_to_status(update, context):
-    query = update.callback_query if hasattr(update, 'callback_query') else update
     context.user_data['step'] = 'status'
     
     keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
@@ -201,8 +200,8 @@ async def proceed_to_status(update, context):
     
     text = f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата: {context.user_data['date']}\n\nУкажите статус заявки:"
     
-    if hasattr(update, 'callback_query'):
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    if hasattr(update, 'callback_query') and update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
