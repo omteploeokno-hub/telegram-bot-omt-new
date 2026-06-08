@@ -83,7 +83,7 @@ async def show_orders_or_empty(update, context, message_prefix=None):
         keyboard = [[InlineKeyboardButton("🔄 Проверить", callback_data="check_orders")]]
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         
-        text = "❌ Нет доступных заявок со статусом «В работе».\nНажмите «Проверить», чтобы обновить список."
+        text = "❌ Нет доступных заявок со статусом «В работа».\nНажмите «Проверить», чтобы обновить список."
         if message_prefix:
             text = f"{message_prefix}\n\n{text}"
         
@@ -92,6 +92,11 @@ async def show_orders_or_empty(update, context, message_prefix=None):
 async def new_report_callback(update, context):
     query = update.callback_query
     await query.answer()
+    
+    # Принудительно завершаем любой активный диалог
+    if context.user_data:
+        context.user_data.clear()
+    
     await show_orders_or_empty(query, context)
 
 async def check_orders_callback(update, context):
@@ -103,6 +108,7 @@ async def cancel_callback(update, context):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+    context.user_data.clear()
     return ConversationHandler.END
 
 async def select_order_callback(update, context):
@@ -111,6 +117,7 @@ async def select_order_callback(update, context):
     
     if query.data == "cancel":
         await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        context.user_data.clear()
         return ConversationHandler.END
     
     context.user_data.clear()
@@ -142,6 +149,7 @@ async def status_callback(update, context):
     
     if query.data == "cancel":
         await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        context.user_data.clear()
         return ConversationHandler.END
     
     status = query.data.split('_')[1]
@@ -238,6 +246,7 @@ async def confirm_callback(update, context):
         )
         return STATUS
     
+    # confirm_yes
     data = context.user_data
     row = data['row']
     
