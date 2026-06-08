@@ -1,4 +1,5 @@
 import os
+import asyncio
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
@@ -8,26 +9,26 @@ if not TOKEN:
     raise ValueError("TELEGRAM_TOKEN не установлен!")
 
 # Flask приложение
-app_flask = Flask(__name__)
+flask_app = Flask(__name__)
 
 # Telegram бот
 telegram_app = Application.builder().token(TOKEN).build()
 
 # ========== КОМАНДЫ ==========
 async def start(update, context):
-    keyboard = [[InlineKeyboardButton("📋 Показать заявку", callback_data="test_callback")]]
+    keyboard = [[InlineKeyboardButton("🔘 Нажми меня", callback_data="test_callback")]]
     await update.message.reply_text(
-        "Нажми на кнопку, чтобы проверить callback:",
+        "👇 Нажми на кнопку:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 async def test_callback(update, context):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("✅ Callback получен! Бот работает правильно.")
+    await query.edit_message_text("✅ Успех! Callback обработан. Кнопки работают.")
 
 # ========== ВЕБХУК ==========
-@app_flask.route('/webhook', methods=['POST'])
+@flask_app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         data = request.get_json()
@@ -38,12 +39,20 @@ def webhook():
         print(f"❌ Ошибка: {e}")
         return "Internal Server Error", 500
 
-@app_flask.route('/')
+@flask_app.route('/')
 def home():
     return "Бот работает", 200
 
-# ========== ЗАПУСК ==========
-def main():
+# ========== ФОНТОВЫЙ ОБРАБОТЧИК ОЧЕРЕДИ ==========
+async def process_updates():
+    while True:
+        try:
+            update = await telegram_app.update_queue.get()
+            await telegram_app.process_update(update)
+        except Exception as e:
+            print(f"Ошибка обработки: {e}")
+
+def run_webhook():
     # Добавляем обработчики
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CallbackQueryHandler(test_callback, pattern="^test_callback$"))
@@ -52,9 +61,14 @@ def main():
     telegram_app.initialize()
     telegram_app.start()
     
+    # Запускаем фоновую задачу для обработки очереди
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.create_task(process_updates())
+    
     port = int(os.environ.get("PORT", 8080))
     print(f"✅ Тестовый бот запущен на порту {port}")
-    app_flask.run(host='0.0.0.0', port=port)
+    flask_app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
-    main()
+    run_webhook()
