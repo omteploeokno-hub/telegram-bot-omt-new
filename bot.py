@@ -107,7 +107,8 @@ async def check_orders_callback(update, context):
     await query.answer()
     await show_orders_or_empty(query, context)
 
-async def cancel_callback(update, context):
+# УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК ОТМЕНЫ (работает и для кнопки, и для команды)
+async def cancel_handler(update, context):
     context.user_data.clear()
     
     if update.callback_query:
@@ -121,8 +122,7 @@ async def select_order_callback(update, context):
     await query.answer()
     
     if query.data == "cancel":
-        context.user_data.clear()
-        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        await cancel_handler(update, context)
         return
     
     context.user_data.clear()
@@ -156,8 +156,7 @@ async def date_callback(update, context):
     await query.answer()
     
     if query.data == "cancel":
-        context.user_data.clear()
-        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        await cancel_handler(update, context)
         return
     
     if query.data == "date_today":
@@ -212,8 +211,7 @@ async def status_callback(update, context):
     await query.answer()
     
     if query.data == "cancel":
-        context.user_data.clear()
-        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        await cancel_handler(update, context)
         return
     
     status = query.data.split('_')[1]
@@ -302,8 +300,7 @@ async def confirm_callback(update, context):
     await query.answer()
     
     if query.data == "cancel":
-        await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
-        context.user_data.clear()
+        await cancel_handler(update, context)
         return
     
     if query.data == "confirm_no":
@@ -378,10 +375,10 @@ def run_webhook():
     telegram_app = Application.builder().token(TOKEN).build()
     
     telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CommandHandler("cancel", cancel_callback))
+    telegram_app.add_handler(CommandHandler("cancel", cancel_handler))
     telegram_app.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
     telegram_app.add_handler(CallbackQueryHandler(check_orders_callback, pattern="^check_orders$"))
-    telegram_app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
+    telegram_app.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
     telegram_app.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
     telegram_app.add_handler(CallbackQueryHandler(date_callback, pattern="^date_"))
     telegram_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
