@@ -1,8 +1,7 @@
-import sqlite3
-import re
 import os
 import json
-import asyncio
+import sqlite3
+import re
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
@@ -11,6 +10,9 @@ from google.oauth2.service_account import Credentials
 
 # ========== НАСТРОЙКИ ==========
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
+if not TOKEN:
+    raise ValueError("TELEGRAM_TOKEN не установлен!")
+
 SPREADSHEET_NAME = "Indev"
 
 USERS = {
@@ -67,11 +69,10 @@ def delete_draft(user_id, row_number):
 def get_sheet(worker_name):
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds_json = os.environ.get('GOOGLE_CREDENTIALS')
-    if creds_json:
-        creds_info = json.loads(creds_json)
-        creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
-    else:
-        creds = Credentials.from_service_account_file('telegram-bot-key.json', scopes=scopes)
+    if not creds_json:
+        raise Exception("GOOGLE_CREDENTIALS не установлена!")
+    creds_info = json.loads(creds_json)
+    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     client = gspread.authorize(creds)
     return client.open(SPREADSHEET_NAME).worksheet(worker_name)
 
@@ -342,21 +343,15 @@ async def back_to_form(update: Update, context):
 
 # ========== ЗАПУСК ==========
 def main():
-    import asyncio
     import requests
     
     init_db()
     
-    # Удаляем вебхук на всякий случай
+    # Удаляем вебхук
     requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook")
     
     # Создаём приложение
     app = Application.builder().token(TOKEN).build()
-    
-    # ⬇️ ВАЖНО: инициализируем приложение асинхронно
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(app.initialize())
     
     # Добавляем обработчики
     app.add_handler(CommandHandler("start", start))
@@ -374,9 +369,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_comment_input))
     
-    print("✅ Бот запущен (polling mode)...")
+    print("✅ Бот запущен...")
     
-    # Запускаем polling с инициализированным приложением
+    # Запускаем polling
     app.run_polling()
 
 if __name__ == '__main__':
