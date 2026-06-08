@@ -33,7 +33,8 @@ def write_to_google_sheets():
         
         creds_info = json.loads(creds_json)
         creds = Credentials.from_service_account_info(creds_info, 
-            scopes=['https://www.googleapis.com/auth/spreadsheets'])
+            scopes=['https://www.googleapis.com/auth/spreadsheets',
+                           'https://www.googleapis.com/auth/drive'])
         
         client = gspread.authorize(creds)
         sheet = client.open(SPREADSHEET_NAME).worksheet(SHEET_NAME)
