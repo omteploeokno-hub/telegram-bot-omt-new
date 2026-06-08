@@ -1,8 +1,9 @@
 import os
+import asyncio
 import json
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -15,7 +16,7 @@ SPREADSHEET_NAME = "Indev"
 SHEET_NAME = "Сергей Олегович"
 
 flask_app = Flask(__name__)
-updater = None
+telegram_app = None
 
 # ========== GOOGLE SHEETS ==========
 def get_worksheet():
@@ -23,14 +24,13 @@ def get_worksheet():
     if not creds_json:
         raise Exception("GOOGLE_CREDENTIALS не установлена!")
     creds_info = json.loads(creds_json)
-    creds = Credentials.from_service_account_info(creds_info, 
+    creds = Credentials.from_service_account_info(creds_info,
         scopes=['https://www.googleapis.com/auth/spreadsheets',
                 'https://www.googleapis.com/auth/drive'])
     client = gspread.authorize(creds)
     return client.open(SPREADSHEET_NAME).worksheet(SHEET_NAME)
 
 def get_available_orders():
-    """Возвращает список заявок со статусом 'В работе'"""
     sheet = get_worksheet()
     records = sheet.get_all_records()
     orders = []
@@ -45,27 +45,26 @@ def get_available_orders():
     return orders
 
 def write_to_order(row_number, value=500):
-    """Записывает значение в столбец G (Сумма) указанной строки"""
     sheet = get_worksheet()
     sheet.update(f'G{row_number}', [[value]])
     print(f"✅ Записано {value} в G{row_number}")
 
 # ========== КОМАНДЫ ==========
-def start(update, context):
+async def start(update, context):
     keyboard = [[InlineKeyboardButton("📋 Создать отчёт", callback_data="new_report")]]
-    update.message.reply_text(
+    await update.message.reply_text(
         "👋 Здравствуйте! Для создания отчёта нажмите на кнопку:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-def new_report_callback(update, context):
+async def new_report_callback(update, context):
     query = update.callback_query
-    query.answer()
+    await query.answer()
     
     orders = get_available_orders()
     
     if not orders:
-        query.edit_message_text("❌ Нет доступных заявок со статусом «В работе».")
+        await query.edit_message_text("❌ Нет доступных заявок со статусом «В работе».")
         return
     
     keyboard = []
@@ -75,38 +74,36 @@ def new_report_callback(update, context):
     
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     
-    query.edit_message_text(
+    await query.edit_message_text(
         "📋 Выберите заявку:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-def select_order_callback(update, context):
+async def select_order_callback(update, context):
     query = update.callback_query
-    query.answer()
+    await query.answer()
     
     if query.data == "cancel":
-        query.edit_message_text("❌ Отменено. Для нового отчёта нажмите /start")
+        await query.edit_message_text("❌ Отменено. Для нового отчёта нажмите /start")
         return
     
     row = int(query.data.split('_')[1])
-    
-    # Записываем 500 в столбец G этой строки
     write_to_order(row, 500)
     
-    query.edit_message_text(f"✅ В заявку (строка {row}) записано 500 в столбец «Сумма заказа».")
-
-def cancel_callback(update, context):
-    query = update.callback_query
-    query.answer()
-    query.edit_message_text("❌ Отменено. Для нового отчёта нажмите /start")
+    await query.edit_message_text(f"✅ В заявку (строка {row}) записано 500 в столбец «Сумма заказа».")
 
 # ========== ВЕБХУК ==========
 @flask_app.route('/webhook', methods=['POST'])
 def webhook():
+    global telegram_app
     try:
         data = request.get_json()
-        update = Update.de_json(data, updater.bot)
-        updater.dispatcher.process_update(update)
+        update = Update.de_json(data, telegram_app.bot)
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(telegram_app.process_update(update))
+        
         return "OK", 200
     except Exception as e:
         print(f"❌ Ошибка: {e}")
@@ -118,15 +115,19 @@ def home():
 
 # ========== ЗАПУСК ==========
 def run_webhook():
-    global updater
+    global telegram_app
     
-    updater = Updater(token=TOKEN, use_context=True)
-    dp = updater.dispatcher
+    telegram_app = Application.builder().token(TOKEN).build()
     
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
-    dp.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
-    dp.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
+    telegram_app.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
+    telegram_app.add_handler(CallbackQueryHandler(lambda u,c: None, pattern="^cancel$"))
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(telegram_app.initialize())
+    loop.run_until_complete(telegram_app.start())
     
     port = int(os.environ.get("PORT", 8080))
     print(f"✅ Бот запущен на порту {port}")
