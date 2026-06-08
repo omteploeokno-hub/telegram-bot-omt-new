@@ -7,6 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 import gspread
 from google.oauth2.service_account import Credentials
+telegram_app = None
 
 # ========== НАСТРОЙКИ ==========
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -342,37 +343,63 @@ async def back_to_form(update: Update, context):
     await show_form(update, context)
 
 # ========== ЗАПУСК ==========
-def main():
-    import requests
-    
+# ========== ВЕБХУК ==========
+from flask import Flask, request
+app_flask = Flask(__name__)
+
+@app_flask.route('/webhook', methods=['POST'])
+def webhook():
+    try:
+        data = request.get_json()
+        update = Update.de_json(data, telegram_app.bot)
+        asyncio.run(telegram_app.process_update(update))
+        return "OK", 200
+    except Exception as e:
+        print(f"❌ Ошибка в вебхуке: {e}")
+        return "Internal Server Error", 500
+
+@app_flask.route('/', methods=['GET'])
+def home():
+    return "Бот работает", 200
+
+def run_webhook():
+    global telegram_app
     init_db()
     
-    # Удаляем вебхук
-    requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook")
+    telegram_app = Application.builder().token(TOKEN).build()
     
-    # Создаём приложение
-    app = Application.builder().token(TOKEN).build()
+    # Добавляем обработчики (те же самые, что были в main)
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("new", new_report))
+    telegram_app.add_handler(CallbackQueryHandler(select_order, pattern="^(order_|prev_page|next_page|cancel)$"))
+    telegram_app.add_handler(CallbackQueryHandler(edit_status_callback, pattern="^edit_status$"))
+    telegram_app.add_handler(CallbackQueryHandler(set_status, pattern="^set_status_"))
+    telegram_app.add_handler(CallbackQueryHandler(edit_comment_callback, pattern="^edit_comment$"))
+    telegram_app.add_handler(CallbackQueryHandler(skip_comment, pattern="^skip_comment$"))
+    telegram_app.add_handler(CallbackQueryHandler(submit_report, pattern="^submit$"))
+    telegram_app.add_handler(CallbackQueryHandler(save_draft_callback, pattern="^save_draft$"))
+    telegram_app.add_handler(CallbackQueryHandler(main_menu, pattern="^main_menu$"))
+    telegram_app.add_handler(CallbackQueryHandler(cancel_edit, pattern="^cancel_edit$"))
+    telegram_app.add_handler(CallbackQueryHandler(back_to_form, pattern="^back_to_form$"))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_comment_input))
     
-    # Добавляем обработчики
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("new", new_report))
-    app.add_handler(CallbackQueryHandler(select_order, pattern="^(order_|prev_page|next_page|cancel)$"))
-    app.add_handler(CallbackQueryHandler(edit_status_callback, pattern="^edit_status$"))
-    app.add_handler(CallbackQueryHandler(set_status, pattern="^set_status_"))
-    app.add_handler(CallbackQueryHandler(edit_comment_callback, pattern="^edit_comment$"))
-    app.add_handler(CallbackQueryHandler(skip_comment, pattern="^skip_comment$"))
-    app.add_handler(CallbackQueryHandler(submit_report, pattern="^submit$"))
-    app.add_handler(CallbackQueryHandler(save_draft_callback, pattern="^save_draft$"))
-    app.add_handler(CallbackQueryHandler(main_menu, pattern="^main_menu$"))
-    app.add_handler(CallbackQueryHandler(cancel_edit, pattern="^cancel_edit$"))
-    app.add_handler(CallbackQueryHandler(back_to_form, pattern="^back_to_form$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_comment_input))
+    # Устанавливаем вебхук
+    import requests
+    domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '')
+    if not domain:
+        print("⚠️ RAILWAY_PUBLIC_DOMAIN не установлена!")
+        print("Вручную установите вебхук по ссылке ниже:")
+        print(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url=https://telegram-bot-omt-production.up.railway.app/webhook")
+    else:
+        webhook_url = f"https://{domain}/webhook"
+        print(f"🔗 Устанавливаю вебхук: {webhook_url}")
+        response = requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={webhook_url}")
+        print(f"✅ Ответ: {response.json()}")
     
-    print("✅ Бот запущен...")
-    
-    # Запускаем polling
-    app.run_polling()
+    port = int(os.environ.get("PORT", 8080))
+    print(f"✅ Бот запущен в режиме вебхука на порту {port}")
+    app_flask.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
-    main()
+    run_webhook()
