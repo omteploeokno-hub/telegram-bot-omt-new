@@ -151,8 +151,7 @@ async def status_callback(update, context):
         await query.edit_message_text("Введите сумму заказа (только цифры):")
         return COST
     else:
-        # Отказ или Перенаправлена
-        context.user_data['cost'] = 0
+        # Отказ или Перенаправлена: сумма = выезду, расходы = 0
         await query.edit_message_text("Введите сумму выезда/доставки (только цифры):")
         return DELIVERY
 
@@ -179,8 +178,9 @@ async def get_delivery(update, context):
             await update.message.reply_text("Введите расходы (только цифры):")
             return EXPENSE
         else:
-            # Отказ или Перенаправлена: расходы = выезду
-            context.user_data['expense'] = delivery
+            # Отказ или Перенаправлена: сумма = выезду, расходы = 0
+            context.user_data['cost'] = delivery
+            context.user_data['expense'] = 0
             return await show_confirmation(update, context)
     except ValueError:
         await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
