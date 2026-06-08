@@ -12,7 +12,7 @@ if not TOKEN:
 flask_app = Flask(__name__)
 
 # Telegram бот
-telegram_app = Application.builder().token(TOKEN).build()
+telegram_app = None
 
 # ========== КОМАНДЫ ==========
 async def start(update, context):
@@ -27,13 +27,19 @@ async def test_callback(update, context):
     await query.answer()
     await query.edit_message_text("✅ Успех! Callback обработан. Кнопки работают.")
 
-# ========== ВЕБХУК ==========
+# ========== ВЕБХУК (синхронная обработка) ==========
 @flask_app.route('/webhook', methods=['POST'])
 def webhook():
+    global telegram_app
     try:
         data = request.get_json()
         update = Update.de_json(data, telegram_app.bot)
-        telegram_app.update_queue.put_nowait(update)
+        
+        # Обрабатываем update синхронно
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(telegram_app.process_update(update))
+        
         return "OK", 200
     except Exception as e:
         print(f"❌ Ошибка: {e}")
@@ -43,28 +49,22 @@ def webhook():
 def home():
     return "Бот работает", 200
 
-# ========== ФОНТОВЫЙ ОБРАБОТЧИК ОЧЕРЕДИ ==========
-async def process_updates():
-    while True:
-        try:
-            update = await telegram_app.update_queue.get()
-            await telegram_app.process_update(update)
-        except Exception as e:
-            print(f"Ошибка обработки: {e}")
-
+# ========== ЗАПУСК ==========
 def run_webhook():
+    global telegram_app
+    
+    # Создаём приложение
+    telegram_app = Application.builder().token(TOKEN).build()
+    
     # Добавляем обработчики
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CallbackQueryHandler(test_callback, pattern="^test_callback$"))
     
     # Инициализируем
-    telegram_app.initialize()
-    telegram_app.start()
-    
-    # Запускаем фоновую задачу для обработки очереди
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.create_task(process_updates())
+    loop.run_until_complete(telegram_app.initialize())
+    loop.run_until_complete(telegram_app.start())
     
     port = int(os.environ.get("PORT", 8080))
     print(f"✅ Тестовый бот запущен на порту {port}")
