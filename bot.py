@@ -377,8 +377,13 @@ def run_webhook():
     global telegram_app
     init_db()
     
+    # Создаём приложение
     telegram_app = Application.builder().token(TOKEN).build()
-    telegram_app.initialize()
+    
+    # Асинхронно инициализируем (ВАЖНО!)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(telegram_app.initialize())
     
     # Добавляем обработчики
     telegram_app.add_handler(CommandHandler("start", start))
@@ -401,8 +406,7 @@ def run_webhook():
     domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '')
     if not domain:
         print("⚠️ RAILWAY_PUBLIC_DOMAIN не установлена!")
-        print("Установите вебхук вручную:")
-        print(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url=https://telegram-bot-omt-production.up.railway.app/webhook")
+        print(f"Установите вебхук вручную: https://api.telegram.org/bot{TOKEN}/setWebhook?url=https://telegram-bot-omt-new-production.up.railway.app/webhook")
     else:
         webhook_url = f"https://{domain}/webhook"
         print(f"🔗 Устанавливаю вебхук: {webhook_url}")
