@@ -188,17 +188,18 @@ async def select_order(update: Update, context):
 
 # ========== ВЕБХУК ==========
 @flask_app.route('/webhook', methods=['POST'])
-async def webhook():
+def webhook():  # <-- Убрал async
     global telegram_app
     try:
         data = request.get_json()
-        update = Update.de_json(data, telegram_app.bot)
-        await telegram_app.update_queue.put(update)
+        # Передаём update в очередь бота синхронно
+        asyncio.run_coroutine_threadsafe(
+            telegram_app.update_queue.put(Update.de_json(data, telegram_app.bot)),
+            asyncio.get_event_loop()
+        )
         return "OK", 200
     except Exception as e:
         print(f"❌ Ошибка в вебхуке: {e}")
-        import traceback
-        traceback.print_exc()
         return "Internal Server Error", 500
 
 @flask_app.route('/', methods=['GET'])
