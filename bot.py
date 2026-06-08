@@ -236,19 +236,18 @@ async def confirm_callback(update, context):
     await query.answer()
     
     if query.data == "cancel":
-        context.user_data.clear()
         await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        context.user_data.clear()
         return
     
     if query.data == "confirm_no":
-        # Возвращаемся к выбору статуса
         keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
-        context.user_data['step'] = 'status'
         await query.edit_message_text(
             f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n\nУкажите статус заявки:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        context.user_data['step'] = 'status'
         return
     
     # confirm_yes
@@ -263,6 +262,10 @@ async def confirm_callback(update, context):
         'status': status_value
     })
     
+    # Сначала редактируем исходное сообщение, чтобы убрать кнопки
+    await query.edit_message_text("✅ Отчёт сохраняется...")
+    
+    # Отправляем сообщение об успехе
     success_message = (
         f"✅ Вы сохранили отчёт по заявке:\n"
         f"📋 ID: {data['order_id']}\n"
@@ -272,11 +275,12 @@ async def confirm_callback(update, context):
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
         f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб"
     )
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=success_message)
     
-    await query.message.reply_text(success_message)
-    
-    # Полный сброс и показ списка заявок
+    # Полный сброс состояния
     context.user_data.clear()
+    
+    # Отправляем новый список заявок
     await show_orders_or_empty(query, context, "📊 Отчёт сохранён!")
 
 # ========== ВЕБХУК ==========
