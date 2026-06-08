@@ -92,7 +92,16 @@ async def show_orders_or_empty(update, context, message_prefix=None):
 async def new_report_callback(update, context):
     query = update.callback_query
     await query.answer()
+    
+    # Сброс данных
     context.user_data.clear()
+    
+    # Принудительный сброс диалога перед началом нового
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    if context.application.conversation_handler:
+        context.application.conversation_handler._conversations.pop((user_id, chat_id), None)
+    
     await show_orders_or_empty(query, context)
 
 async def check_orders_callback(update, context):
@@ -105,6 +114,13 @@ async def cancel_callback(update, context):
     await query.answer()
     await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
     context.user_data.clear()
+    
+    # Принудительный сброс диалога
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    if context.application.conversation_handler:
+        context.application.conversation_handler._conversations.pop((user_id, chat_id), None)
+    
     return ConversationHandler.END
 
 async def select_order_callback(update, context):
@@ -228,6 +244,13 @@ async def confirm_callback(update, context):
     if query.data == "cancel":
         await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
         context.user_data.clear()
+        
+        # Принудительный сброс диалога
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+        if context.application.conversation_handler:
+            context.application.conversation_handler._conversations.pop((user_id, chat_id), None)
+        
         return ConversationHandler.END
     
     if query.data == "confirm_no":
@@ -240,6 +263,7 @@ async def confirm_callback(update, context):
         )
         return STATUS
     
+    # confirm_yes
     data = context.user_data
     row = data['row']
     
@@ -265,6 +289,12 @@ async def confirm_callback(update, context):
     await query.edit_message_text(success_message)
     
     context.user_data.clear()
+    
+    # Принудительный сброс диалога после сохранения
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    if context.application.conversation_handler:
+        context.application.conversation_handler._conversations.pop((user_id, chat_id), None)
     
     await show_orders_or_empty(query, context, "📊 Отчёт сохранён!")
     
