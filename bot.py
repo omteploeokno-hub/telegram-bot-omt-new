@@ -3,7 +3,7 @@ import asyncio
 import json
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -18,8 +18,8 @@ SHEET_NAME = "Сергей Олегович"
 flask_app = Flask(__name__)
 telegram_app = None
 
-# Хранилище временных данных для каждого пользователя
-user_data = {}
+# Состояния разговора
+COST, DELIVERY, EXPENSE = range(3)
 
 # ========== GOOGLE SHEETS ==========
 def get_worksheet():
@@ -55,8 +55,6 @@ def update_order(row, data):
 
 # ========== КОМАНДЫ ==========
 async def start(update, context):
-    user_id = update.effective_user.id
-    user_data[user_id] = {}
     keyboard = [[InlineKeyboardButton("📋 Создать отчёт", callback_data="new_report")]]
     await update.message.reply_text(
         "👋 Здравствуйте! Для создания отчёта нажмите на кнопку:",
@@ -84,6 +82,7 @@ async def new_report_callback(update, context):
         "📋 Выберите заявку:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    return
 
 async def select_order_callback(update, context):
     query = update.callback_query
@@ -91,51 +90,58 @@ async def select_order_callback(update, context):
     
     if query.data == "cancel":
         await query.edit_message_text("❌ Отменено. Для нового отчёта нажмите /start")
-        return
+        return ConversationHandler.END
     
-    user_id = update.effective_user.id
     row = int(query.data.split('_')[1])
-    user_data[user_id]['row'] = row
+    context.user_data['row'] = row
     
     await query.edit_message_text("Введите сумму заказа (только цифры):")
+    return COST
 
-async def handle_cost(update, context):
-    user_id = update.effective_user.id
+async def get_cost(update, context):
     try:
         cost = int(update.message.text.strip())
         if cost < 0:
             raise ValueError
-        user_data[user_id]['cost'] = cost
+        context.user_data['cost'] = cost
         await update.message.reply_text("Введите стоимость выезда/доставки (только цифры):")
+        return DELIVERY
     except ValueError:
         await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
+        return COST
 
-async def handle_delivery(update, context):
-    user_id = update.effective_user.id
+async def get_delivery(update, context):
     try:
         delivery = int(update.message.text.strip())
         if delivery < 0:
             raise ValueError
-        user_data[user_id]['delivery'] = delivery
+        context.user_data['delivery'] = delivery
         await update.message.reply_text("Введите расходы (только цифры):")
+        return EXPENSE
     except ValueError:
         await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
+        return DELIVERY
 
-async def handle_expense(update, context):
-    user_id = update.effective_user.id
+async def get_expense(update, context):
     try:
         expense = int(update.message.text.strip())
         if expense < 0:
             raise ValueError
-        user_data[user_id]['expense'] = expense
+        context.user_data['expense'] = expense
         
-        row = user_data[user_id]['row']
-        update_order(row, user_data[user_id])
+        row = context.user_data['row']
+        update_order(row, context.user_data)
         
-        await update.message.reply_text(f"✅ Отчёт сохранён! Сумма {user_data[user_id]['cost']}, выезд {user_data[user_id]['delivery']}, расходы {user_data[user_id]['expense']} записаны в строку {row}.")
-        del user_data[user_id]
+        await update.message.reply_text(f"✅ Отчёт сохранён! Сумма {context.user_data['cost']}, выезд {context.user_data['delivery']}, расходы {expense} записаны в строку {row}.")
+        
+        return ConversationHandler.END
     except ValueError:
         await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
+        return EXPENSE
+
+async def cancel(update, context):
+    await update.message.reply_text("❌ Отменено. Для нового отчёта нажмите /start")
+    return ConversationHandler.END
 
 # ========== ВЕБХУК ==========
 @flask_app.route('/webhook', methods=['POST'])
@@ -164,14 +170,20 @@ def run_webhook():
     
     telegram_app = Application.builder().token(TOKEN).build()
     
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(select_order_callback, pattern="^order_")],
+        states={
+            COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_cost)],
+            DELIVERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_delivery)],
+            EXPENSE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_expense)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
-    telegram_app.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
     telegram_app.add_handler(CallbackQueryHandler(lambda u,c: None, pattern="^cancel$"))
-    
-    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cost))
-    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_delivery))
-    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_expense))
+    telegram_app.add_handler(conv_handler)
     
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
