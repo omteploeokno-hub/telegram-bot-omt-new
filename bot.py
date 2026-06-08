@@ -68,11 +68,15 @@ async def start(update, context):
 async def show_orders_or_empty(update, context, message_prefix=None):
     orders = get_available_orders()
     
+    # Кнопка обновления всегда есть
+    refresh_button = [InlineKeyboardButton("🔄 Обновить", callback_data="check_orders")]
+    
     if orders:
         keyboard = []
         for order in orders:
             text = f"{order['id']} - {order['client']} - {order['address']}"
             keyboard.append([InlineKeyboardButton(text, callback_data=f"order_{order['row']}")])
+        keyboard.append(refresh_button)
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         
         text = "📋 Выберите заявку:"
@@ -84,10 +88,10 @@ async def show_orders_or_empty(update, context, message_prefix=None):
         else:
             await update.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        keyboard = [[InlineKeyboardButton("🔄 Проверить", callback_data="check_orders")]]
+        keyboard = [refresh_button]
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         
-        text = "❌ Нет доступных заявок со статусом «В работе».\nНажмите «Проверить», чтобы обновить список."
+        text = "❌ Нет доступных заявок со статусом «В работе»."
         if message_prefix:
             text = f"{message_prefix}\n\n{text}"
         
@@ -187,7 +191,7 @@ async def handle_date_input(update, context):
     try:
         datetime.strptime(date_str, "%d.%m.%Y")
         context.user_data['date'] = date_str
-        await update.message.reply_text(f"✅ Дата установлена: {date_str}")
+        # Убрано сообщение "Дата установлена"
         await proceed_to_status(update, context)
     except ValueError:
         await update.message.reply_text("❌ Неверная дата. Проверьте день и месяц.")
