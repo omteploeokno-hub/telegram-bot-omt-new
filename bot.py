@@ -19,10 +19,8 @@ flask_app = Flask(__name__)
 telegram_app = None
 main_loop = None
 
-# Состояния разговора
 STATUS, COST, DELIVERY, EXPENSE, CONFIRM = range(5)
 
-# Статусы
 STATUS_OPTIONS = ["✅ Выполнена", "❌ Отказ", "🔄 Перенаправлена"]
 
 # ========== GOOGLE SHEETS ==========
@@ -129,7 +127,6 @@ async def select_order_callback(update, context):
     context.user_data['order_client'] = order['client']
     context.user_data['order_address'] = order['address']
     
-    # Запрашиваем статус
     keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     
@@ -154,10 +151,9 @@ async def status_callback(update, context):
         await query.edit_message_text("Введите сумму заказа (только цифры):")
         return COST
     else:
-        # Отказ или Перенаправлена: сумма и расходы = 0, запрашиваем только выезд
+        # Отказ или Перенаправлена
         context.user_data['cost'] = 0
-        context.user_data['expense'] = 0
-        await query.edit_message_text("Введите стоимость выезда/доставки (только цифры):")
+        await query.edit_message_text("Введите сумму выезда/доставки (только цифры):")
         return DELIVERY
 
 async def get_cost(update, context):
@@ -166,7 +162,7 @@ async def get_cost(update, context):
         if cost < 0:
             raise ValueError
         context.user_data['cost'] = cost
-        await update.message.reply_text("Введите стоимость выезда/доставки (только цифры):")
+        await update.message.reply_text("Введите сумму выезда/доставки (только цифры):")
         return DELIVERY
     except ValueError:
         await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
@@ -179,12 +175,12 @@ async def get_delivery(update, context):
             raise ValueError
         context.user_data['delivery'] = delivery
         
-        # Если статус "Выполнена" — запрашиваем расходы
         if context.user_data['status'] == "✅ Выполнена":
             await update.message.reply_text("Введите расходы (только цифры):")
             return EXPENSE
         else:
-            # Отказ или Перенаправлена — переходим к подтверждению
+            # Отказ или Перенаправлена: расходы = выезду
+            context.user_data['expense'] = delivery
             return await show_confirmation(update, context)
     except ValueError:
         await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
@@ -209,9 +205,8 @@ async def show_confirmation(update, context):
         f"📋 **Проверьте данные:**\n\n"
         f"Заявка: {data['order_id']} - {data['order_client']} - {data['order_address']}\n"
         f"📌 Статус: {status}\n"
-        f"💰 Сумма: {data['cost']} руб\n"
-        f"🚚 Выезд/доставка: {data['delivery']} руб\n"
-        f"📦 Расходы: {data['expense']} руб\n\n"
+        f"💰 Общая сумма заказа: {data['cost']} руб\n"
+        f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб\n\n"
         f"Всё верно?"
     )
     
@@ -233,7 +228,6 @@ async def confirm_callback(update, context):
         return ConversationHandler.END
     
     if query.data == "confirm_no":
-        # Возвращаемся к выбору статуса
         keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         
@@ -243,11 +237,9 @@ async def confirm_callback(update, context):
         )
         return STATUS
     
-    # confirm_yes — сохраняем в таблицу
     data = context.user_data
     row = data['row']
     
-    # Сохраняем статус в столбец O
     status_value = data['status'].replace('✅ ', '').replace('❌ ', '').replace('🔄 ', '')
     
     update_order(row, {
@@ -263,9 +255,8 @@ async def confirm_callback(update, context):
         f"🏢 Клиент: {data['order_client']}\n"
         f"📍 Адрес: {data['order_address']}\n\n"
         f"📌 Статус: {data['status']}\n"
-        f"💰 Сумма: {data['cost']} руб\n"
-        f"🚚 Выезд/доставка: {data['delivery']} руб\n"
-        f"📦 Расходы: {data['expense']} руб"
+        f"💰 Общая сумма заказа: {data['cost']} руб\n"
+        f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб"
     )
     
     await query.edit_message_text(success_message)
