@@ -225,6 +225,7 @@ async def confirm_callback(update, context):
     
     if query.data == "cancel":
         await query.edit_message_text("❌ Отменено. Для создания нового отчёта нажмите /start")
+        context.user_data.clear()
         return ConversationHandler.END
     
     if query.data == "confirm_no":
