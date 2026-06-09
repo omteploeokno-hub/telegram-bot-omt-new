@@ -397,6 +397,10 @@ async def proceed_to_status(update, context):
 
 async def status_callback(update, context):
     query = update.callback_query
+    if not query:
+        await update.message.reply_text("❌ Ошибка: не удалось обработать выбор.")
+        return
+    
     await query.answer()
     
     if query.data == "cancel":
@@ -411,17 +415,19 @@ async def status_callback(update, context):
     context.user_data['status'] = status
     
     if status == "✅ Выполнена":
-        # Для статуса "Выполнена" сначала спрашиваем тип оплаты
         context.user_data['step'] = 'payment'
         keyboard = [[InlineKeyboardButton(s, callback_data=f"payment_{s}")] for s in PAYMENT_OPTIONS]
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         await query.edit_message_text(
-            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n📅 Дата выполнения: {context.user_data['date']}\n📌 Статус: {status}\n\nКто получил оплату?",
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n"
+            f"📅 Дата поступления: {context.user_data['receipt_date']}\n"
+            f"📅 Дата выполнения: {context.user_data['date']}\n"
+            f"📌 Статус: {status}\n\n"
+            f"Кто получил оплату?",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     else:
-        # Для статусов "Отказ" или "Перенаправлена" сразу переходим к комментарию
         context.user_data['payment_type'] = ""
         context.user_data['payment_type_display'] = "—"
         await proceed_to_comment(update, context)
@@ -612,7 +618,6 @@ async def confirm_callback(update, context):
         return
     
     if query.data == "confirm_no":
-        # Возврат к выбору статуса
         context.user_data['step'] = 'status'
         keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
