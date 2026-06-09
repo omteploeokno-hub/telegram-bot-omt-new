@@ -15,7 +15,6 @@ if not TOKEN:
     raise ValueError("TELEGRAM_TOKEN не установлен!")
 
 SPREADSHEET_NAME = "Indev"
-SHEET_NAME = "Сергей Олегович"
 
 # Часовой пояс Екатеринбург (UTC+5)
 EKATERINBURG_TZ = timezone(timedelta(hours=5))
@@ -26,8 +25,27 @@ main_loop = None
 
 STATUS_OPTIONS = ["✅ Выполнена", "❌ Отказ", "🔄 Перенаправлена"]
 
+# ========== ПОЛЬЗОВАТЕЛИ ==========
+USERS = {
+    6067555377: {  # ваш ID (Тест)
+        "name": "Тест",
+        "sheet": "Тест",
+        "chat_id": None
+    },
+    5518656277: {  # Сергей Олегович
+        "name": "Сергей Олегович",
+        "sheet": "Сергей Олегович",
+        "chat_id": None
+    }
+    # 123456789: {  # Виктор (пока закомментировано)
+    #     "name": "Виктор",
+    #     "sheet": "Виктор",
+    #     "chat_id": None
+    # }
+}
+
 # ========== GOOGLE SHEETS ==========
-def get_worksheet():
+def get_worksheet(sheet_name):
     creds_json = os.environ.get('GOOGLE_CREDENTIALS')
     if not creds_json:
         raise Exception("GOOGLE_CREDENTIALS не установлена!")
@@ -36,10 +54,10 @@ def get_worksheet():
         scopes=['https://www.googleapis.com/auth/spreadsheets',
                 'https://www.googleapis.com/auth/drive'])
     client = gspread.authorize(creds)
-    return client.open(SPREADSHEET_NAME).worksheet(SHEET_NAME)
+    return client.open(SPREADSHEET_NAME).worksheet(sheet_name)
 
-def get_available_orders():
-    sheet = get_worksheet()
+def get_available_orders(sheet_name):
+    sheet = get_worksheet(sheet_name)
     records = sheet.get_all_records()
     orders = []
     for idx, row in enumerate(records, start=2):
@@ -52,8 +70,8 @@ def get_available_orders():
             })
     return orders
 
-def update_order(row, data):
-    sheet = get_worksheet()
+def update_order(sheet_name, row, data):
+    sheet = get_worksheet(sheet_name)
     sheet.update(values=[[data['cost']]], range_name=f'G{row}')
     sheet.update(values=[[data['delivery']]], range_name=f'H{row}')
     sheet.update(values=[[data['expense']]], range_name=f'I{row}')
@@ -63,14 +81,32 @@ def update_order(row, data):
 
 # ========== КОМАНДЫ ==========
 async def start(update, context):
+    user_id = update.effective_user.id
+    
+    if user_id not in USERS:
+        await update.message.reply_text("⛔ Доступ запрещён. Обратитесь к администратору.")
+        return
+    
+    context.user_data['user_id'] = user_id
+    context.user_data['sheet_name'] = USERS[user_id]['sheet']
+    context.user_data['user_name'] = USERS[user_id]['name']
+    
     keyboard = [[InlineKeyboardButton("📋 Создать отчёт", callback_data="new_report")]]
     await update.message.reply_text(
-        "👋 Здравствуйте! Для создания отчёта нажмите на кнопку:",
+        f"👋 Здравствуйте, {USERS[user_id]['name']}!\n\n📋 Для создания отчёта нажмите на кнопку:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 async def show_orders_or_empty(update, context, message_prefix=None):
-    orders = get_available_orders()
+    sheet_name = context.user_data.get('sheet_name')
+    if not sheet_name:
+        if isinstance(update, Update):
+            await update.message.reply_text("❌ Ошибка: не удалось определить ваш лист. Начните с /start")
+        else:
+            await update.edit_message_text("❌ Ошибка: не удалось определить ваш лист. Начните с /start")
+        return
+    
+    orders = get_available_orders(sheet_name)
     
     refresh_button = [InlineKeyboardButton("🔄 Обновить", callback_data="check_orders")]
     
@@ -107,6 +143,17 @@ async def new_report_callback(update, context):
     query = update.callback_query
     await query.answer()
     context.user_data.clear()
+    
+    # Восстанавливаем данные пользователя
+    user_id = update.effective_user.id
+    if user_id not in USERS:
+        await query.edit_message_text("⛔ Доступ запрещён.")
+        return
+    
+    context.user_data['user_id'] = user_id
+    context.user_data['sheet_name'] = USERS[user_id]['sheet']
+    context.user_data['user_name'] = USERS[user_id]['name']
+    
     await show_orders_or_empty(query, context)
 
 async def check_orders_callback(update, context):
@@ -133,7 +180,6 @@ async def go_back(update, context):
         await show_orders_or_empty(query, context)
     
     elif step == 'waiting_date':
-        # Возврат к выбору даты
         context.user_data['step'] = 'date'
         keyboard = [
             [InlineKeyboardButton("📅 Сегодня", callback_data="date_today")],
@@ -148,7 +194,6 @@ async def go_back(update, context):
         )
     
     elif step == 'status':
-        # Возврат к выбору даты
         context.user_data['step'] = 'date'
         keyboard = [
             [InlineKeyboardButton("📅 Сегодня", callback_data="date_today")],
@@ -163,7 +208,6 @@ async def go_back(update, context):
         )
     
     elif step in ['cost', 'delivery', 'expense']:
-        # Возврат к выбору статуса
         context.user_data['step'] = 'status'
         keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
@@ -192,7 +236,6 @@ async def go_back(update, context):
             )
     
     elif step == 'confirm':
-        # Возврат к комментарию
         status = context.user_data.get('status')
         is_required = status != "✅ Выполнена"
         
@@ -230,9 +273,21 @@ async def select_order_callback(update, context):
         return
     
     context.user_data.clear()
+    
+    # Восстанавливаем данные пользователя
+    user_id = update.effective_user.id
+    if user_id not in USERS:
+        await query.edit_message_text("⛔ Доступ запрещён.")
+        return
+    
+    context.user_data['user_id'] = user_id
+    context.user_data['sheet_name'] = USERS[user_id]['sheet']
+    context.user_data['user_name'] = USERS[user_id]['name']
+    
     row = int(query.data.split('_')[1])
     
-    orders = get_available_orders()
+    sheet_name = context.user_data['sheet_name']
+    orders = get_available_orders(sheet_name)
     order = next((o for o in orders if o['row'] == row), None)
     if not order:
         await query.edit_message_text("❌ Ошибка: заявка не найдена. Возможно, статус изменился.")
@@ -518,10 +573,11 @@ async def confirm_callback(update, context):
     
     # confirm_yes
     data = context.user_data
+    sheet_name = context.user_data['sheet_name']
     row = data['row']
     status_value = data['status'].replace('✅ ', '').replace('❌ ', '').replace('🔄 ', '')
     
-    update_order(row, {
+    update_order(sheet_name, row, {
         'cost': data['cost'],
         'delivery': data['delivery'],
         'expense': data['expense'],
@@ -546,6 +602,13 @@ async def confirm_callback(update, context):
     await asyncio.sleep(2)
     
     context.user_data.clear()
+    
+    # Восстанавливаем данные пользователя
+    user_id = update.effective_user.id
+    if user_id in USERS:
+        context.user_data['user_id'] = user_id
+        context.user_data['sheet_name'] = USERS[user_id]['sheet']
+        context.user_data['user_name'] = USERS[user_id]['name']
     
     keyboard = [[InlineKeyboardButton("📋 Создать новый отчёт", callback_data="new_report")]]
     await query.edit_message_text(
