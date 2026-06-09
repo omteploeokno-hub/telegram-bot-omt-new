@@ -59,6 +59,7 @@ def update_order(row, data):
     sheet.update(values=[[data['expense']]], range_name=f'I{row}')
     sheet.update(values=[[data['status']]], range_name=f'O{row}')
     sheet.update(values=[[data['date']]], range_name=f'D{row}')
+    sheet.update(values=[[data.get('comment', '')]], range_name=f'P{row}')
 
 # ========== КОМАНДЫ ==========
 async def start(update, context):
@@ -269,7 +270,7 @@ async def handle_text(update, context):
             else:
                 context.user_data['cost'] = delivery
                 context.user_data['expense'] = 0
-                await show_confirmation(update, context)
+                await proceed_to_comment(update, context)
         except ValueError:
             await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
     
@@ -279,16 +280,69 @@ async def handle_text(update, context):
             if expense < 0:
                 raise ValueError
             context.user_data['expense'] = expense
-            await show_confirmation(update, context)
+            await proceed_to_comment(update, context)
         except ValueError:
             await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
+    
+    elif step == 'waiting_comment':
+        comment = update.message.text.strip()
+        
+        status = context.user_data.get('status')
+        is_required = status != "✅ Выполнена"
+        
+        if is_required and not comment:
+            await update.message.reply_text(
+                "❌ Комментарий обязателен для статуса «Отказ» или «Перенаправлена».\n"
+                "Пожалуйста, введите причину:"
+            )
+            return
+        
+        context.user_data['comment'] = comment
+        await show_confirmation(update, context)
     
     else:
         await update.message.reply_text("Начните с /start")
 
+async def proceed_to_comment(update, context):
+    status = context.user_data.get('status')
+    is_required = status != "✅ Выполнена"
+    
+    context.user_data['step'] = 'waiting_comment'
+    
+    if is_required:
+        prompt = (
+            "💬 Введите комментарий (обязательно):\n\n"
+            f"Если выбран статус «{status}», необходимо ввести причину."
+        )
+    else:
+        prompt = (
+            "💬 Введите комментарий (необязательно):\n\n"
+            "Дополнительная информация о заявке (обратная связь от клиента / какая-либо иная важная информация)\n\n"
+            "Если не хотите оставлять комментарий, просто нажмите /skip"
+        )
+    
+    await update.message.reply_text(prompt)
+
+async def skip_comment(update, context):
+    if context.user_data.get('step') != 'waiting_comment':
+        await update.message.reply_text("Начните с /start")
+        return
+    
+    status = context.user_data.get('status')
+    is_required = status != "✅ Выполнена"
+    
+    if is_required:
+        await update.message.reply_text("❌ Комментарий обязателен для этого статуса. Введите комментарий:")
+        return
+    
+    context.user_data['comment'] = ""
+    await show_confirmation(update, context)
+
 async def show_confirmation(update, context):
     data = context.user_data
     status = data['status']
+    comment = data.get('comment', '')
+    comment_display = comment if comment else "—"
     
     text = (
         f"📋 **Проверьте данные:**\n\n"
@@ -296,7 +350,8 @@ async def show_confirmation(update, context):
         f"📅 Дата: {data['date']}\n"
         f"📌 Статус: {status}\n"
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
-        f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб\n\n"
+        f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб\n"
+        f"💬 Комментарий: {comment_display}\n\n"
         f"Всё верно?"
     )
     
@@ -337,7 +392,8 @@ async def confirm_callback(update, context):
         'delivery': data['delivery'],
         'expense': data['expense'],
         'status': status_value,
-        'date': data['date']
+        'date': data['date'],
+        'comment': data.get('comment', '')
     })
     
     success_message = (
@@ -348,7 +404,8 @@ async def confirm_callback(update, context):
         f"📅 Дата: {data['date']}\n"
         f"📌 Статус: {data['status']}\n"
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
-        f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб"
+        f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб\n"
+        f"💬 Комментарий: {data.get('comment', '—')}"
     )
     await query.edit_message_text(success_message)
     
@@ -390,6 +447,7 @@ def run_webhook():
     
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("cancel", cancel_handler))
+    telegram_app.add_handler(CommandHandler("skip", skip_comment))
     telegram_app.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
     telegram_app.add_handler(CallbackQueryHandler(check_orders_callback, pattern="^check_orders$"))
     telegram_app.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
