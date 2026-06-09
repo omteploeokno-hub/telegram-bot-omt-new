@@ -123,6 +123,12 @@ async def cancel_handler(update, context):
     else:
         await update.message.reply_text("❌ Отменено. Для создания нового отчёта нажмите /start")
 
+# Временная заглушка для кнопки Назад
+async def go_back(update, context):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🔙 Назад (будет реализовано позже)")
+
 async def select_order_callback(update, context):
     query = update.callback_query
     await query.answer()
@@ -150,6 +156,7 @@ async def select_order_callback(update, context):
         [InlineKeyboardButton("📅 Сегодня", callback_data="date_today")],
         [InlineKeyboardButton("📆 Указать другую дату", callback_data="date_other")]
     ]
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     
     await query.edit_message_text(
@@ -451,6 +458,7 @@ def run_webhook():
     telegram_app.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
     telegram_app.add_handler(CallbackQueryHandler(check_orders_callback, pattern="^check_orders$"))
     telegram_app.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
+    telegram_app.add_handler(CallbackQueryHandler(go_back, pattern="^back$"))
     telegram_app.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
     telegram_app.add_handler(CallbackQueryHandler(date_callback, pattern="^date_"))
     telegram_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
