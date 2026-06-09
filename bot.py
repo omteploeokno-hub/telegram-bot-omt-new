@@ -24,6 +24,7 @@ telegram_app = None
 main_loop = None
 
 STATUS_OPTIONS = ["✅ Выполнена", "❌ Отказ", "🔄 Перенаправлена"]
+PAYMENT_OPTIONS = ["💵 Оплату получил я", "🏢 Оплату получила организация"]
 
 # ========== ПОЛЬЗОВАТЕЛИ ==========
 USERS = {
@@ -67,7 +68,7 @@ def get_available_orders(sheet_name):
                 'id': row.get('ID заявки', ''),
                 'client': row.get('Клиент', ''),
                 'address': row.get('Адрес', ''),
-                'receipt_date': row.get('Дата поступления', '')  # столбец C
+                'receipt_date': row.get('Дата поступления', '')
             })
     return orders
 
@@ -79,6 +80,7 @@ def update_order(sheet_name, row, data):
     sheet.update(values=[[data['status']]], range_name=f'O{row}')
     sheet.update(values=[[data['date']]], range_name=f'D{row}')
     sheet.update(values=[[data.get('comment', '')]], range_name=f'P{row}')
+    sheet.update(values=[[data.get('payment_type', '')]], range_name=f'R{row}')
 
 # ========== КОМАНДЫ ==========
 async def start(update, context):
@@ -204,6 +206,17 @@ async def go_back(update, context):
         
         await query.edit_message_text(
             f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n\nУкажите дату выполнения:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif step == 'payment':
+        context.user_data['step'] = 'status'
+        keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+        
+        await query.edit_message_text(
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n📅 Дата выполнения: {context.user_data['date']}\n\nУкажите статус заявки:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     
@@ -398,19 +411,49 @@ async def status_callback(update, context):
     context.user_data['status'] = status
     
     if status == "✅ Выполнена":
-        context.user_data['step'] = 'cost'
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+        # Для статуса "Выполнена" сначала спрашиваем тип оплаты
+        context.user_data['step'] = 'payment'
+        keyboard = [[InlineKeyboardButton(s, callback_data=f"payment_{s}")] for s in PAYMENT_OPTIONS]
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         await query.edit_message_text(
-            "Введите сумму заказа (только цифры):",
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n📅 Дата выполнения: {context.user_data['date']}\n📌 Статус: {status}\n\nКто получил оплату?",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     else:
-        context.user_data['step'] = 'delivery'
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
-        await query.edit_message_text(
-            "Введите сумму выезда/доставки (только цифры):",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        # Для статусов "Отказ" или "Перенаправлена" сразу переходим к комментарию
+        context.user_data['payment_type'] = ""
+        context.user_data['payment_type_display'] = "—"
+        await proceed_to_comment(update, context)
+
+async def payment_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "cancel":
+        await cancel_handler(update, context)
+        return
+    
+    if query.data == "back":
+        await go_back(update, context)
+        return
+    
+    payment = query.data.split('_')[1]
+    context.user_data['payment_type_display'] = payment
+    if payment == "💵 Оплату получил я":
+        context.user_data['payment_type'] = "Ф"
+    else:
+        context.user_data['payment_type'] = "Ю"
+    
+    await proceed_to_cost(update, context)
+
+async def proceed_to_cost(update, context):
+    context.user_data['step'] = 'cost'
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+    await update.callback_query.edit_message_text(
+        "Введите сумму заказа (только цифры):",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def handle_text(update, context):
     step = context.user_data.get('step')
@@ -526,6 +569,7 @@ async def show_confirmation(update, context):
     status = data['status']
     comment = data.get('comment', '')
     comment_display = comment if comment else "—"
+    payment_display = data.get('payment_type_display', '—')
     
     text = (
         f"📋 **Проверьте данные:**\n\n"
@@ -533,6 +577,12 @@ async def show_confirmation(update, context):
         f"📅 Дата поступления: {data['receipt_date']}\n"
         f"📅 Дата выполнения: {data['date']}\n"
         f"📌 Статус: {status}\n"
+    )
+    
+    if status == "✅ Выполнена":
+        text += f"💳 Тип оплаты: {payment_display}\n"
+    
+    text += (
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
         f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб\n"
         f"💬 Комментарий: {comment_display}\n\n"
@@ -562,6 +612,8 @@ async def confirm_callback(update, context):
         return
     
     if query.data == "confirm_no":
+        # Возврат к выбору статуса
+        context.user_data['step'] = 'status'
         keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
@@ -569,7 +621,6 @@ async def confirm_callback(update, context):
             f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n📅 Дата выполнения: {context.user_data['date']}\n\nУкажите статус заявки:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        context.user_data['step'] = 'status'
         return
     
     # confirm_yes
@@ -584,7 +635,8 @@ async def confirm_callback(update, context):
         'expense': data['expense'],
         'status': status_value,
         'date': data['date'],
-        'comment': data.get('comment', '')
+        'comment': data.get('comment', ''),
+        'payment_type': data.get('payment_type', '')
     })
     
     success_message = (
@@ -595,10 +647,17 @@ async def confirm_callback(update, context):
         f"📅 Дата поступления: {data['receipt_date']}\n"
         f"📅 Дата выполнения: {data['date']}\n"
         f"📌 Статус: {data['status']}\n"
+    )
+    
+    if data.get('status') == "✅ Выполнена":
+        success_message += f"💳 Тип оплаты: {data.get('payment_type_display', '—')}\n"
+    
+    success_message += (
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
         f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб\n"
         f"💬 Комментарий: {data.get('comment', '—')}"
     )
+    
     await query.edit_message_text(success_message)
     
     await asyncio.sleep(2)
@@ -652,6 +711,7 @@ def run_webhook():
     telegram_app.add_handler(CallbackQueryHandler(go_back, pattern="^back$"))
     telegram_app.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
     telegram_app.add_handler(CallbackQueryHandler(date_callback, pattern="^date_"))
+    telegram_app.add_handler(CallbackQueryHandler(payment_callback, pattern="^payment_"))
     telegram_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
     telegram_app.add_handler(CallbackQueryHandler(confirm_callback, pattern="^confirm_"))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
