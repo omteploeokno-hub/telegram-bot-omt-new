@@ -123,11 +123,17 @@ async def cancel_handler(update, context):
     else:
         await update.message.reply_text("❌ Отменено. Для создания нового отчёта нажмите /start")
 
-# Временная заглушка для кнопки Назад
 async def go_back(update, context):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("🔙 Назад (будет реализовано позже)")
+    
+    step = context.user_data.get('step')
+    
+    if step == 'date':
+        # Возврат к выбору заявки
+        await show_orders_or_empty(query, context)
+    else:
+        await query.edit_message_text("🔙 Назад (пока не реализовано для этого шага)")
 
 async def select_order_callback(update, context):
     query = update.callback_query
