@@ -736,4 +736,19 @@ def run_webhook():
     
     main_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(main_loop)
-    main
+    main_loop.run_until_complete(telegram_app.initialize())
+    main_loop.run_until_complete(telegram_app.start())
+    
+    port = int(os.environ.get("PORT", 8080))
+    print(f"✅ Бот запущен на порту {port}")
+    
+    def run_flask():
+        flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    
+    import threading
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    main_loop.run_forever()
+
+if __name__ == '__main__':
+    run_webhook()
