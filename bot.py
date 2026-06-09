@@ -24,7 +24,10 @@ telegram_app = None
 main_loop = None
 
 STATUS_OPTIONS = ["✅ Выполнена", "❌ Отказ", "🔄 Перенаправлена"]
-PAYMENT_OPTIONS = ["💵 Оплату получил я", "🏢 Оплату получила организация"]
+PAYMENT_OPTIONS = [
+    ("individual", "💵 Оплату получил я"),
+    ("legal", "🏢 Оплату получила организация")
+]
 
 # ========== ПОЛЬЗОВАТЕЛИ ==========
 USERS = {
@@ -416,7 +419,9 @@ async def status_callback(update, context):
     
     if status == "✅ Выполнена":
         context.user_data['step'] = 'payment'
-        keyboard = [[InlineKeyboardButton(s, callback_data=f"payment_{s}")] for s in PAYMENT_OPTIONS]
+        keyboard = []
+        for value, label in PAYMENT_OPTIONS:
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"payment_{value}")])
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         await query.edit_message_text(
@@ -444,12 +449,14 @@ async def payment_callback(update, context):
         await go_back(update, context)
         return
     
-    payment = query.data.split('_')[1]
-    context.user_data['payment_type_display'] = payment
-    if payment == "💵 Оплату получил я":
+    payment_value = query.data.split('_')[1]
+    
+    if payment_value == "individual":
         context.user_data['payment_type'] = "Ф"
+        context.user_data['payment_type_display'] = "💵 Оплату получил я"
     else:
         context.user_data['payment_type'] = "Ю"
+        context.user_data['payment_type_display'] = "🏢 Оплату получила организация"
     
     await proceed_to_cost(update, context)
 
@@ -553,7 +560,10 @@ async def proceed_to_comment(update, context):
             "Если не хотите оставлять комментарий, просто нажмите /skip"
         )
     
-    await update.message.reply_text(prompt, reply_markup=InlineKeyboardMarkup(keyboard))
+    if hasattr(update, 'callback_query') and update.callback_query:
+        await update.callback_query.edit_message_text(prompt, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await update.message.reply_text(prompt, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def skip_comment(update, context):
     if context.user_data.get('step') != 'waiting_comment':
