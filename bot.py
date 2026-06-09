@@ -433,9 +433,15 @@ async def status_callback(update, context):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     else:
+        # Отказ или Перенаправлена
+        context.user_data['step'] = 'delivery'
         context.user_data['payment_type'] = ""
         context.user_data['payment_type_display'] = "—"
-        await proceed_to_comment(update, context)
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+        await query.edit_message_text(
+            "Введите сумму выезда/доставки (только цифры):",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 async def payment_callback(update, context):
     query = update.callback_query
@@ -458,12 +464,9 @@ async def payment_callback(update, context):
         context.user_data['payment_type'] = "Ю"
         context.user_data['payment_type_display'] = "🏢 Оплату получила организация"
     
-    await proceed_to_cost(update, context)
-
-async def proceed_to_cost(update, context):
     context.user_data['step'] = 'cost'
     keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
-    await update.callback_query.edit_message_text(
+    await query.edit_message_text(
         "Введите сумму заказа (только цифры):",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -733,19 +736,4 @@ def run_webhook():
     
     main_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(main_loop)
-    main_loop.run_until_complete(telegram_app.initialize())
-    main_loop.run_until_complete(telegram_app.start())
-    
-    port = int(os.environ.get("PORT", 8080))
-    print(f"✅ Бот запущен на порту {port}")
-    
-    def run_flask():
-        flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-    
-    import threading
-    threading.Thread(target=run_flask, daemon=True).start()
-    
-    main_loop.run_forever()
-
-if __name__ == '__main__':
-    run_webhook()
+    main
