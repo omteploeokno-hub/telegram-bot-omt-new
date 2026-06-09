@@ -27,21 +27,16 @@ STATUS_OPTIONS = ["✅ Выполнена", "❌ Отказ", "🔄 Перена
 
 # ========== ПОЛЬЗОВАТЕЛИ ==========
 USERS = {
-    6067555377: {  # ваш ID (Тест)
+    6067555377: {
         "name": "Тест",
         "sheet": "Тест",
         "chat_id": None
     },
-    5518656277: {  # Сергей Олегович
+    5518656277: {
         "name": "Сергей Олегович",
         "sheet": "Сергей Олегович",
         "chat_id": None
     }
-    # 123456789: {  # Виктор (пока закомментировано)
-    #     "name": "Виктор",
-    #     "sheet": "Виктор",
-    #     "chat_id": None
-    # }
 }
 
 # ========== GOOGLE SHEETS ==========
@@ -66,7 +61,8 @@ def get_available_orders(sheet_name):
                 'row': idx,
                 'id': row.get('ID заявки', ''),
                 'client': row.get('Клиент', ''),
-                'address': row.get('Адрес', '')
+                'address': row.get('Адрес', ''),
+                'receipt_date': row.get('Дата поступления', '')  # столбец C
             })
     return orders
 
@@ -144,7 +140,6 @@ async def new_report_callback(update, context):
     await query.answer()
     context.user_data.clear()
     
-    # Восстанавливаем данные пользователя
     user_id = update.effective_user.id
     if user_id not in USERS:
         await query.edit_message_text("⛔ Доступ запрещён.")
@@ -189,7 +184,7 @@ async def go_back(update, context):
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         
         await query.edit_message_text(
-            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n\nУкажите дату выполнения:",
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n\nУкажите дату выполнения:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     
@@ -203,7 +198,7 @@ async def go_back(update, context):
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         
         await query.edit_message_text(
-            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n\nУкажите дату выполнения:",
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n\nУкажите дату выполнения:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     
@@ -214,7 +209,7 @@ async def go_back(update, context):
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         
         await query.edit_message_text(
-            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата: {context.user_data['date']}\n\nУкажите статус заявки:",
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n📅 Дата выполнения: {context.user_data['date']}\n\nУкажите статус заявки:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     
@@ -274,7 +269,6 @@ async def select_order_callback(update, context):
     
     context.user_data.clear()
     
-    # Восстанавливаем данные пользователя
     user_id = update.effective_user.id
     if user_id not in USERS:
         await query.edit_message_text("⛔ Доступ запрещён.")
@@ -297,6 +291,7 @@ async def select_order_callback(update, context):
     context.user_data['order_id'] = order['id']
     context.user_data['order_client'] = order['client']
     context.user_data['order_address'] = order['address']
+    context.user_data['receipt_date'] = order.get('receipt_date', '—')
     context.user_data['step'] = 'date'
     
     keyboard = [
@@ -307,7 +302,7 @@ async def select_order_callback(update, context):
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     
     await query.edit_message_text(
-        f"📋 Заявка: {order['id']} - {order['client']} - {order['address']}\n\nУкажите дату выполнения:",
+        f"📋 Заявка: {order['id']} - {order['client']} - {order['address']}\n📅 Дата поступления: {order.get('receipt_date', '—')}\n\nУкажите дату выполнения:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -375,7 +370,7 @@ async def proceed_to_status(update, context):
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     
-    text = f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата: {context.user_data['date']}\n\nУкажите статус заявки:"
+    text = f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n📅 Дата выполнения: {context.user_data['date']}\n\nУкажите статус заявки:"
     
     if hasattr(update, 'callback_query') and update.callback_query:
         await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -530,7 +525,8 @@ async def show_confirmation(update, context):
     text = (
         f"📋 **Проверьте данные:**\n\n"
         f"Заявка: {data['order_id']} - {data['order_client']} - {data['order_address']}\n"
-        f"📅 Дата: {data['date']}\n"
+        f"📅 Дата поступления: {data['receipt_date']}\n"
+        f"📅 Дата выполнения: {data['date']}\n"
         f"📌 Статус: {status}\n"
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
         f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб\n"
@@ -565,7 +561,7 @@ async def confirm_callback(update, context):
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         await query.edit_message_text(
-            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата: {context.user_data['date']}\n\nУкажите статус заявки:",
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n📅 Дата выполнения: {context.user_data['date']}\n\nУкажите статус заявки:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         context.user_data['step'] = 'status'
@@ -591,7 +587,8 @@ async def confirm_callback(update, context):
         f"📋 ID: {data['order_id']}\n"
         f"🏢 Клиент: {data['order_client']}\n"
         f"📍 Адрес: {data['order_address']}\n\n"
-        f"📅 Дата: {data['date']}\n"
+        f"📅 Дата поступления: {data['receipt_date']}\n"
+        f"📅 Дата выполнения: {data['date']}\n"
         f"📌 Статус: {data['status']}\n"
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
         f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб\n"
@@ -603,7 +600,6 @@ async def confirm_callback(update, context):
     
     context.user_data.clear()
     
-    # Восстанавливаем данные пользователя
     user_id = update.effective_user.id
     if user_id in USERS:
         context.user_data['user_id'] = user_id
