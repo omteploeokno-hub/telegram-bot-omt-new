@@ -130,10 +130,92 @@ async def go_back(update, context):
     step = context.user_data.get('step')
     
     if step == 'date':
-        # Возврат к выбору заявки
         await show_orders_or_empty(query, context)
+    
+    elif step == 'waiting_date':
+        # Возврат к выбору даты
+        context.user_data['step'] = 'date'
+        keyboard = [
+            [InlineKeyboardButton("📅 Сегодня", callback_data="date_today")],
+            [InlineKeyboardButton("📆 Указать другую дату", callback_data="date_other")]
+        ]
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+        
+        await query.edit_message_text(
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n\nУкажите дату выполнения:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif step == 'status':
+        # Возврат к выбору даты
+        context.user_data['step'] = 'date'
+        keyboard = [
+            [InlineKeyboardButton("📅 Сегодня", callback_data="date_today")],
+            [InlineKeyboardButton("📆 Указать другую дату", callback_data="date_other")]
+        ]
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+        
+        await query.edit_message_text(
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n\nУкажите дату выполнения:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif step in ['cost', 'delivery', 'expense']:
+        # Возврат к выбору статуса
+        context.user_data['step'] = 'status'
+        keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+        
+        await query.edit_message_text(
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата: {context.user_data['date']}\n\nУкажите статус заявки:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif step == 'waiting_comment':
+        status = context.user_data.get('status')
+        if status == "✅ Выполнена":
+            context.user_data['step'] = 'expense'
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+            await query.edit_message_text(
+                "Введите расходы (только цифры):",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            context.user_data['step'] = 'delivery'
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+            await query.edit_message_text(
+                "Введите сумму выезда/доставки (только цифры):",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+    
+    elif step == 'confirm':
+        # Возврат к комментарию
+        status = context.user_data.get('status')
+        is_required = status != "✅ Выполнена"
+        
+        context.user_data['step'] = 'waiting_comment'
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+        
+        if is_required:
+            prompt = (
+                "💬 Введите комментарий (обязательно):\n\n"
+                f"Если выбран статус «{status}», необходимо ввести причину."
+            )
+        else:
+            prompt = (
+                "💬 Введите комментарий (необязательно):\n\n"
+                "Дополнительная информация о заявке (обратная связь от клиента / какая-либо иная важная информация)\n\n"
+                "Если не хотите оставлять комментарий, просто нажмите /skip"
+            )
+        
+        await query.edit_message_text(prompt, reply_markup=InlineKeyboardMarkup(keyboard))
+    
     else:
-        await query.edit_message_text("🔙 Назад (пока не реализовано для этого шага)")
+        await query.edit_message_text("❌ Нельзя вернуться назад. Начните с /start")
 
 async def select_order_callback(update, context):
     query = update.callback_query
@@ -141,6 +223,10 @@ async def select_order_callback(update, context):
     
     if query.data == "cancel":
         await cancel_handler(update, context)
+        return
+    
+    if query.data == "back":
+        await go_back(update, context)
         return
     
     context.user_data.clear()
@@ -178,6 +264,10 @@ async def date_callback(update, context):
         await cancel_handler(update, context)
         return
     
+    if query.data == "back":
+        await go_back(update, context)
+        return
+    
     if query.data == "date_today":
         today = datetime.now(EKATERINBURG_TZ).strftime("%d.%m.%Y")
         context.user_data['date'] = today
@@ -185,10 +275,12 @@ async def date_callback(update, context):
     
     elif query.data == "date_other":
         context.user_data['step'] = 'waiting_date'
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
         await query.edit_message_text(
             "Введите дату в формате ДД.ММ.ГГГГ\n"
             "Например: 15.06.2026\n\n"
-            "❌ Для отмены нажмите /cancel"
+            "❌ Для отмены нажмите /cancel",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
 async def handle_date_input(update, context):
@@ -225,6 +317,7 @@ async def proceed_to_status(update, context):
     context.user_data['step'] = 'status'
     
     keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     
     text = f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата: {context.user_data['date']}\n\nУкажите статус заявки:"
@@ -242,15 +335,27 @@ async def status_callback(update, context):
         await cancel_handler(update, context)
         return
     
+    if query.data == "back":
+        await go_back(update, context)
+        return
+    
     status = query.data.split('_')[1]
     context.user_data['status'] = status
     
     if status == "✅ Выполнена":
         context.user_data['step'] = 'cost'
-        await query.edit_message_text("Введите сумму заказа (только цифры):")
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+        await query.edit_message_text(
+            "Введите сумму заказа (только цифры):",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     else:
         context.user_data['step'] = 'delivery'
-        await query.edit_message_text("Введите сумму выезда/доставки (только цифры):")
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+        await query.edit_message_text(
+            "Введите сумму выезда/доставки (только цифры):",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 async def handle_text(update, context):
     step = context.user_data.get('step')
@@ -266,7 +371,11 @@ async def handle_text(update, context):
                 raise ValueError
             context.user_data['cost'] = cost
             context.user_data['step'] = 'delivery'
-            await update.message.reply_text("Введите сумму выезда/доставки (только цифры):")
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+            await update.message.reply_text(
+                "Введите сумму выезда/доставки (только цифры):",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
         except ValueError:
             await update.message.reply_text("❌ Введите неотрицательное число. Попробуйте ещё раз:")
     
@@ -279,7 +388,11 @@ async def handle_text(update, context):
             
             if context.user_data.get('status') == "✅ Выполнена":
                 context.user_data['step'] = 'expense'
-                await update.message.reply_text("Введите расходы (только цифры):")
+                keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+                await update.message.reply_text(
+                    "Введите расходы (только цифры):",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
             else:
                 context.user_data['cost'] = delivery
                 context.user_data['expense'] = 0
@@ -322,6 +435,8 @@ async def proceed_to_comment(update, context):
     
     context.user_data['step'] = 'waiting_comment'
     
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+    
     if is_required:
         prompt = (
             "💬 Введите комментарий (обязательно):\n\n"
@@ -334,7 +449,7 @@ async def proceed_to_comment(update, context):
             "Если не хотите оставлять комментарий, просто нажмите /skip"
         )
     
-    await update.message.reply_text(prompt)
+    await update.message.reply_text(prompt, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def skip_comment(update, context):
     if context.user_data.get('step') != 'waiting_comment':
@@ -371,6 +486,7 @@ async def show_confirmation(update, context):
     keyboard = [
         [InlineKeyboardButton("✅ Да, всё верно", callback_data="confirm_yes")],
         [InlineKeyboardButton("✏️ Нет, заполнить заново", callback_data="confirm_no")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="back")],
         [InlineKeyboardButton("❌ Отмена", callback_data="cancel")]
     ]
     
@@ -385,8 +501,13 @@ async def confirm_callback(update, context):
         await cancel_handler(update, context)
         return
     
+    if query.data == "back":
+        await go_back(update, context)
+        return
+    
     if query.data == "confirm_no":
         keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         await query.edit_message_text(
             f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата: {context.user_data['date']}\n\nУкажите статус заявки:",
