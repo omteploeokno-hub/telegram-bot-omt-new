@@ -180,6 +180,8 @@ async def go_back(update, context):
     await query.answer()
     
     step = context.user_data.get('step')
+    status = context.user_data.get('status')
+    is_executed = status == "✅ Выполнена"
     
     if step == 'date':
         await show_orders_or_empty(query, context)
@@ -223,20 +225,73 @@ async def go_back(update, context):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     
-    elif step in ['cost', 'delivery', 'expense']:
-        context.user_data['step'] = 'status'
-        keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
-        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
-        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
-        
-        await query.edit_message_text(
-            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n📅 Дата выполнения: {context.user_data['date']}\n\nУкажите статус заявки:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+    elif step == 'cost':
+        if is_executed:
+            context.user_data['step'] = 'payment'
+            keyboard = []
+            for value, label in PAYMENT_OPTIONS:
+                keyboard.append([InlineKeyboardButton(label, callback_data=f"payment_{value}")])
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
+            keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+            await query.edit_message_text(
+                f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n"
+                f"📅 Дата поступления: {context.user_data['receipt_date']}\n"
+                f"📅 Дата выполнения: {context.user_data['date']}\n"
+                f"📌 Статус: {status}\n\n"
+                f"Кто получил оплату?",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            context.user_data['step'] = 'status'
+            keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
+            keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+            await query.edit_message_text(
+                f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n📅 Дата выполнения: {context.user_data['date']}\n\nУкажите статус заявки:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+    
+    elif step == 'delivery':
+        if is_executed:
+            context.user_data['step'] = 'cost'
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+            await query.edit_message_text(
+                "Введите сумму заказа (только цифры):",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            context.user_data['step'] = 'status'
+            keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
+            keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+            await query.edit_message_text(
+                f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n📅 Дата выполнения: {context.user_data['date']}\n\nУкажите статус заявки:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+    
+    elif step == 'expense':
+        if is_executed:
+            context.user_data['step'] = 'delivery'
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+            await query.edit_message_text(
+                "Введите сумму выезда/доставки (только цифры):",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            context.user_data['step'] = 'status'
+            keyboard = [[InlineKeyboardButton(s, callback_data=f"status_{s}")] for s in STATUS_OPTIONS]
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
+            keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+            await query.edit_message_text(
+                f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n📅 Дата поступления: {context.user_data['receipt_date']}\n📅 Дата выполнения: {context.user_data['date']}\n\nУкажите статус заявки:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
     
     elif step == 'waiting_comment':
         status = context.user_data.get('status')
-        if status == "✅ Выполнена":
+        is_exec = status == "✅ Выполнена"
+        
+        if is_exec:
             context.user_data['step'] = 'expense'
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
             await query.edit_message_text(
@@ -252,26 +307,7 @@ async def go_back(update, context):
             )
     
     elif step == 'confirm':
-        status = context.user_data.get('status')
-        is_required = status != "✅ Выполнена"
-        
-        context.user_data['step'] = 'waiting_comment'
-        
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
-        
-        if is_required:
-            prompt = (
-                "💬 Введите комментарий (обязательно):\n\n"
-                f"Если выбран статус «{status}», необходимо ввести причину."
-            )
-        else:
-            prompt = (
-                "💬 Введите комментарий (необязательно):\n\n"
-                "Дополнительная информация о заявке (обратная связь от клиента / какая-либо иная важная информация)\n\n"
-                "Если не хотите оставлять комментарий, просто нажмите /skip"
-            )
-        
-        await query.edit_message_text(prompt, reply_markup=InlineKeyboardMarkup(keyboard))
+        await proceed_to_comment(update, context)
     
     else:
         await query.edit_message_text("❌ Нельзя вернуться назад. Начните с /start")
