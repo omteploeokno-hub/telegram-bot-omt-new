@@ -693,28 +693,27 @@ async def confirm_callback(update, context):
         'payment_type': data.get('payment_type', '')
     })
     
-    # ========== ОТПРАВКА В ЧАТ БРИГАДЫ ==========
+       # ========== ОТПРАВКА ОТЧЕТОВ В ЧАТЫ ==========
     user_id = update.effective_user.id
     chat_id = USERS.get(user_id, {}).get('chat_id')
     if chat_id:
         report_text = (
-            f"📊 **Новый отчёт**\n"
-            f"👤 Мастер: {context.user_data.get('user_name', 'Неизвестно')}\n"
-            f"📋 Заявка: {data['order_id']}\n"
-            f"🏢 Клиент: {data['order_client']}\n"
-            f"📍 Адрес: {data['order_address']}\n"
-            f"📅 Дата выполнения: {data['date']}\n"
-            f"📌 Статус: {data['status']}\n"
-            f"💰 Сумма: {data['cost']} руб\n"
-            f"🚚 Выезд: {data['delivery']} руб\n"
-            f"📦 Расходы: {data['expense']} руб\n"
-            f"💬 Комментарий: {data.get('comment', '—')}"
+            f"👤 Мастер: {context.user_data.get('user_name', 'Неизвестно')}\n\n"
+            f"<b>Дата выполнения:</b> {data['date']}\n\n"
+            f"ID заявки: {data['order_id']}\n\n"
+            f"Адрес: {data['order_address']}\n"
+            f"Клиент: {data['order_client']}\n\n"
+            f"<b>Общая сумма:</b> <b>{data['cost']} руб</b>\n"
+            f"<b>Выезд:</b> <b>{data['delivery']} руб</b>\n"
+            f"<b>Расходы:</b> <b>{data['expense']} руб</b>\n\n"
+            f"<b>Комментарий к заявке:</b> <i>{data.get('comment', '—')}</i>\n\n"
         )
+        
         if data.get('status') == "✅ Выполнена":
-            report_text += f"\n💳 Тип оплаты: {data.get('payment_type_display', '—')}"
+            report_text += f"<b>Способ оплаты:</b> {data.get('payment_type_display', '—')}"
         
         try:
-            await context.bot.send_message(chat_id=chat_id, text=report_text, parse_mode='Markdown')
+            await context.bot.send_message(chat_id=chat_id, text=report_text, parse_mode='HTML')
         except Exception as e:
             print(f"⚠️ Не удалось отправить сообщение в чат {chat_id}: {e}")
     # =========================================
