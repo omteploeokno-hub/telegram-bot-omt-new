@@ -34,17 +34,17 @@ USERS = {
     6067555377: {
         "name": "Тест",
         "sheet": "Тест",
-        "chat_id": None  # Замените на ID чата Теста, если нужно
+        "chat_id": None  # замените на ID чата бригады Теста
     },
     5518656277: {
         "name": "Сергей Олегович",
         "sheet": "Сергей Олегович",
-        "chat_id": None  # Замените на ID чата Сергея
+        "chat_id": None  # замените на ID чата бригады Сергея
     },
     1004439700: {
         "name": "Виктор",
         "sheet": "Виктор",
-        "chat_id": None  # Замените на ID чата Виктора
+        "chat_id": None  # замените на ID чата бригады Виктора
     }
 }
 
@@ -765,3 +765,52 @@ def webhook():
         update = Update.de_json(data, telegram_app.bot)
         asyncio.run_coroutine_threadsafe(
             telegram_app.process_update(update),
+            main_loop
+        )
+        return "OK", 200
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return "Internal Server Error", 500
+
+@flask_app.route('/')
+def home():
+    return "Бот работает", 200
+
+# ========== ЗАПУСК ==========
+def run_webhook():
+    global telegram_app, main_loop
+    
+    telegram_app = Application.builder().token(TOKEN).build()
+    
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("cancel", cancel_handler))
+    telegram_app.add_handler(CommandHandler("skip", skip_comment))
+    telegram_app.add_handler(CallbackQueryHandler(new_report_callback, pattern="^new_report$"))
+    telegram_app.add_handler(CallbackQueryHandler(check_orders_callback, pattern="^check_orders$"))
+    telegram_app.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
+    telegram_app.add_handler(CallbackQueryHandler(go_back, pattern="^back$"))
+    telegram_app.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
+    telegram_app.add_handler(CallbackQueryHandler(date_callback, pattern="^date_"))
+    telegram_app.add_handler(CallbackQueryHandler(payment_callback, pattern="^payment_"))
+    telegram_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
+    telegram_app.add_handler(CallbackQueryHandler(confirm_callback, pattern="^confirm_"))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    
+    main_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(main_loop)
+    main_loop.run_until_complete(telegram_app.initialize())
+    main_loop.run_until_complete(telegram_app.start())
+    
+    port = int(os.environ.get("PORT", 8080))
+    print(f"✅ Бот запущен на порту {port}")
+    
+    def run_flask():
+        flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    
+    import threading
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    main_loop.run_forever()
+
+if __name__ == '__main__':
+    run_webhook()
