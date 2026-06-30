@@ -34,17 +34,17 @@ USERS = {
     6067555377: {
         "name": "Тест",
         "sheet": "Тест",
-        "chat_id": None  # замените на ID чата  
+        "chat_id": None
     },
     5518656277: {
         "name": "Сергей Олегович",
         "sheet": "Сергей Олегович",
-        "chat_id": -5446818397  # замените на ID чата
+        "chat_id": -5446818397
     },
     1004439700: {
         "name": "Виктор",
         "sheet": "Виктор",
-        "chat_id": None  # замените на ID чата
+        "chat_id": None
     }
 }
 
@@ -59,6 +59,13 @@ def get_worksheet(sheet_name):
                 'https://www.googleapis.com/auth/drive'])
     client = gspread.authorize(creds)
     return client.open(SPREADSHEET_NAME).worksheet(sheet_name)
+
+def get_next_empty_row(sheet):
+    all_values = sheet.get_all_values()
+    for idx, row in enumerate(all_values, start=1):
+        if all(cell == '' for cell in row):
+            return idx
+    return len(all_values) + 1
 
 def get_available_orders(sheet_name):
     sheet = get_worksheet(sheet_name)
@@ -84,6 +91,70 @@ def update_order(sheet_name, row, data):
     sheet.update(values=[[data['date']]], range_name=f'D{row}')
     sheet.update(values=[[data.get('comment', '')]], range_name=f'P{row}')
     sheet.update(values=[[data.get('payment_type', '')]], range_name=f'R{row}')
+
+async def redirect_order(data, sheet_name):
+    """Перенаправляет заявку в Первичный пул заявок"""
+    print("DEBUG: redirect_order вызван")
+    
+    try:
+        primary_sheet = get_worksheet("Первичный пул заявок")
+        primary_row = get_next_empty_row(primary_sheet)
+        
+        master_sheet = get_worksheet(sheet_name)
+        order_id = data['order_id']
+        
+        all_ids = master_sheet.col_values(1)
+        master_row = None
+        for idx, val in enumerate(all_ids, start=1):
+            if val == order_id:
+                master_row = idx
+                break
+        
+        if not master_row:
+            print(f"DEBUG: заявка {order_id} не найдена в листе мастера")
+            return
+        
+        source = master_sheet.cell(master_row, 2).value
+        receipt_date = master_sheet.cell(master_row, 3).value
+        client = master_sheet.cell(master_row, 5).value
+        address = master_sheet.cell(master_row, 6).value
+        comment = data.get('comment', '')
+        
+        primary_sheet.update(range_name=f'A{primary_row}', values=[[order_id]])
+        primary_sheet.update(range_name=f'B{primary_row}', values=[[source]])
+        primary_sheet.update(range_name=f'C{primary_row}', values=[[receipt_date]])
+        primary_sheet.update(range_name=f'E{primary_row}', values=[[client]])
+        primary_sheet.update(range_name=f'F{primary_row}', values=[[address]])
+        primary_sheet.update(range_name=f'H{primary_row}', values=[["Да"]])
+        
+        print(f"DEBUG: заявка {order_id} скопирована в Первичный пул, строка {primary_row}")
+        
+        general_sheet = get_worksheet("Общий пул заявок")
+        all_ids_general = general_sheet.col_values(1)
+        general_row = None
+        for idx, val in enumerate(all_ids_general, start=1):
+            if val == order_id:
+                general_row = idx
+                break
+        
+        if general_row:
+            general_sheet.update(range_name=f'G{general_row}', values=[["На перенаправление"]])
+            general_sheet.update(range_name=f'H{general_row}', values=[[""]])
+            
+            comment_text = f"Перенаправлена: {comment}"
+            for col in range(10, 19):
+                cell_value = general_sheet.cell(general_row, col).value
+                if not cell_value:
+                    general_sheet.update(range_name=f'{chr(64 + col)}{general_row}', values=[[comment_text]])
+                    print(f"DEBUG: комментарий добавлен в столбец {chr(64 + col)}")
+                    break
+            
+            print(f"DEBUG: общий пул обновлён, строка {general_row}")
+        else:
+            print(f"DEBUG: заявка {order_id} не найдена в общем пуле")
+            
+    except Exception as e:
+        print(f"DEBUG: ошибка при перенаправлении: {e}")
 
 # ========== КОМАНДЫ ==========
 async def start(update, context):
@@ -693,7 +764,12 @@ async def confirm_callback(update, context):
         'payment_type': data.get('payment_type', '')
     })
     
-       # ========== ОТПРАВКА ОТЧЕТОВ В ЧАТЫ ==========
+    # ========== ЕСЛИ СТАТУС "ПЕРЕНАПРАВЛЕНА" ==========
+    if data['status'] == "🔄 Перенаправлена":
+        await redirect_order(data, sheet_name)
+    # ===============================================
+    
+    # ========== ОТПРАВКА ОТЧЕТОВ В ЧАТЫ ==========
     user_id = update.effective_user.id
     chat_id = USERS.get(user_id, {}).get('chat_id')
     if chat_id:
@@ -736,6 +812,9 @@ async def confirm_callback(update, context):
         f"   Из них: выезд/доставка {data['delivery']} руб, расходы {data['expense']} руб\n"
         f"💬 Комментарий: {data.get('comment', '—')}"
     )
+    
+    if data['status'] == "🔄 Перенаправлена":
+        success_message += "\n\n🔄 Заявка отправлена на перенаправление."
     
     await query.edit_message_text(success_message)
     
