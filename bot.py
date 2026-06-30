@@ -118,7 +118,8 @@ async def redirect_order(data, sheet_name):
         receipt_date = master_sheet.cell(master_row, 3).value
         client = master_sheet.cell(master_row, 5).value
         address = master_sheet.cell(master_row, 6).value
-        comment = data.get('comment', '')
+        
+        now = datetime.now(EKATERINBURG_TZ).strftime("%d.%m.%Y")
         
         primary_sheet.update(range_name=f'A{primary_row}', values=[[order_id]])
         primary_sheet.update(range_name=f'B{primary_row}', values=[[source]])
@@ -126,6 +127,7 @@ async def redirect_order(data, sheet_name):
         primary_sheet.update(range_name=f'E{primary_row}', values=[[client]])
         primary_sheet.update(range_name=f'F{primary_row}', values=[[address]])
         primary_sheet.update(range_name=f'H{primary_row}', values=[["Да"]])
+        primary_sheet.update(range_name=f'I{primary_row}', values=[[now]])
         
         print(f"DEBUG: заявка {order_id} скопирована в Первичный пул, строка {primary_row}")
         
@@ -141,6 +143,7 @@ async def redirect_order(data, sheet_name):
             general_sheet.update(range_name=f'G{general_row}', values=[["На перенаправление"]])
             general_sheet.update(range_name=f'H{general_row}', values=[[""]])
             
+            comment = data.get('comment', '')
             comment_text = f"Перенаправлена: {comment}"
             for col in range(10, 19):
                 cell_value = general_sheet.cell(general_row, col).value
