@@ -155,6 +155,27 @@ async def redirect_order(data, sheet_name):
             print(f"DEBUG: общий пул обновлён, строка {general_row}")
         else:
             print(f"DEBUG: заявка {order_id} не найдена в общем пуле")
+        
+        # ========== ОТПРАВКА В ЛОГИ ДВИЖЕНИЯ ЗАЯВОК ==========
+        try:
+            logs_chat_id = -5316127083
+            now = datetime.now(EKATERINBURG_TZ)
+            date_time_str = now.strftime("%d.%m.%Y %H:%M UTC+5")
+            
+            master_name = sheet_name
+            
+            log_text = (
+                f"🟢 {date_time_str} произошел отказ от заявки ID #{order_id}\n\n"
+                f"<i>Действие совершил: \"{master_name}\"</i>"
+            )
+            asyncio.run_coroutine_threadsafe(
+                telegram_app.bot.send_message(chat_id=logs_chat_id, text=log_text, parse_mode='HTML'),
+                main_loop
+            )
+            print("DEBUG: уведомление о перенаправлении отправлено в группу логов")
+        except Exception as e:
+            print(f"DEBUG: не удалось отправить уведомление о перенаправлении: {e}")
+        # =========================================================
             
     except Exception as e:
         print(f"DEBUG: ошибка при перенаправлении: {e}")
