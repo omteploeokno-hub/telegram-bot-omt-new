@@ -893,51 +893,51 @@ async def confirm_callback(update, context):
         return
     
     # confirm_yes
-data = context.user_data
-sheet_name = context.user_data['sheet_name']
-row = data['row']
-status_value = data['status'].replace('✅ ', '').replace('❌ ', '').replace('🔄 ', '')
-
-try:
-    # Записываем в лист мастера
-    update_order(sheet_name, row, {
-        'cost': data['cost'],
-        'delivery': data['delivery'],
-        'expense': data['expense'],
-        'status': status_value,
-        'date': data['date'],
-        'comment': data.get('comment', ''),
-        'payment_type': data.get('payment_type', ''),
-        'collaboration': data.get('collaboration', False)
-    })
-    print(f"DEBUG: данные успешно записаны для заявки {data['order_id']}")
-except Exception as e:
-    print(f"❌ ОШИБКА при записи в таблицу: {e}")
-    await query.edit_message_text(f"❌ Произошла ошибка при сохранении отчёта: {e}")
-    return
-
-# ========== ОБРАБОТКА РАЗНЫХ СТАТУСОВ ==========
-
-# 1. Если статус "Перенаправлена" - выполняем полную логику перенаправления
-if data['status'] == "🔄 Перенаправлена":
+    data = context.user_data
+    sheet_name = context.user_data['sheet_name']
+    row = data['row']
+    status_value = data['status'].replace('✅ ', '').replace('❌ ', '').replace('🔄 ', '')
+    
     try:
-        await redirect_order(data, sheet_name)
+        # Записываем в лист мастера
+        update_order(sheet_name, row, {
+            'cost': data['cost'],
+            'delivery': data['delivery'],
+            'expense': data['expense'],
+            'status': status_value,
+            'date': data['date'],
+            'comment': data.get('comment', ''),
+            'payment_type': data.get('payment_type', ''),
+            'collaboration': data.get('collaboration', False)
+        })
+        print(f"DEBUG: данные успешно записаны для заявки {data['order_id']}")
     except Exception as e:
-        print(f"❌ ОШИБКА при перенаправлении: {e}")
-
-# 2. Если статус "Выполнена" или "Отказ" - добавляем комментарий в общий пул и отправляем лог
-else:
-    try:
-        if data['status'] == "✅ Выполнена":
-            add_comment_to_general_pool(data['order_id'], data.get('comment', ''), "Выполнена")
-            master_name = context.user_data.get('user_name', 'Неизвестно')
-            await send_log_message(data['order_id'], master_name, "заявка выполнена")
-        elif data['status'] == "❌ Отказ":
-            add_comment_to_general_pool(data['order_id'], data.get('comment', ''), "Отказ")
-            master_name = context.user_data.get('user_name', 'Неизвестно')
-            await send_log_message(data['order_id'], master_name, "заявка отклонена")
-    except Exception as e:
-        print(f"❌ ОШИБКА при отправке логов: {e}")
+        print(f"❌ ОШИБКА при записи в таблицу: {e}")
+        await query.edit_message_text(f"❌ Произошла ошибка при сохранении отчёта: {e}")
+        return
+    
+    # ========== ОБРАБОТКА РАЗНЫХ СТАТУСОВ ==========
+    
+    # 1. Если статус "Перенаправлена" - выполняем полную логику перенаправления
+    if data['status'] == "🔄 Перенаправлена":
+        try:
+            await redirect_order(data, sheet_name)
+        except Exception as e:
+            print(f"❌ ОШИБКА при перенаправлении: {e}")
+    
+    # 2. Если статус "Выполнена" или "Отказ" - добавляем комментарий в общий пул и отправляем лог
+    else:
+        try:
+            if data['status'] == "✅ Выполнена":
+                add_comment_to_general_pool(data['order_id'], data.get('comment', ''), "Выполнена")
+                master_name = context.user_data.get('user_name', 'Неизвестно')
+                await send_log_message(data['order_id'], master_name, "заявка выполнена")
+            elif data['status'] == "❌ Отказ":
+                add_comment_to_general_pool(data['order_id'], data.get('comment', ''), "Отказ")
+                master_name = context.user_data.get('user_name', 'Неизвестно')
+                await send_log_message(data['order_id'], master_name, "заявка отклонена")
+        except Exception as e:
+            print(f"❌ ОШИБКА при отправке логов: {e}")
     
     # ========== ОТПРАВКА ОТЧЕТОВ В ЧАТЫ ==========
     user_id = update.effective_user.id
