@@ -109,7 +109,36 @@ def update_order(sheet_name, row, data):
     else:
         print(f"DEBUG: заявка индивидуальная, формулы не устанавливаем")
 
-# ========== НОВАЯ ФУНКЦИЯ: ОТПРАВКА В ЛОГИ ==========
+# ========== НОВАЯ ФУНКЦИЯ: ПОЛУЧЕНИЕ ПЕРВОГО КОММЕНТАРИЯ ИЗ ОБЩЕГО ПУЛА ==========
+def get_first_comment_from_general_pool(order_id):
+    """Получает первый комментарий (из столбца J) для заявки из Общего пула"""
+    print(f"DEBUG: get_first_comment_from_general_pool вызван для order_id={order_id}")
+    try:
+        general_sheet = get_worksheet("Общий пул заявок")
+        
+        # Находим строку с заявкой
+        all_ids = general_sheet.col_values(1)
+        general_row = None
+        for idx, val in enumerate(all_ids, start=1):
+            if val == order_id:
+                general_row = idx
+                break
+        
+        if not general_row:
+            print(f"DEBUG: заявка {order_id} не найдена в общем пуле")
+            return ""
+        
+        # Получаем значение из столбца J (10-й столбец)
+        first_comment = general_sheet.cell(general_row, 10).value
+        print(f"DEBUG: первый комментарий из общего пула: {first_comment}")
+        
+        return first_comment if first_comment else ""
+                
+    except Exception as e:
+        print(f"DEBUG: ошибка при получении комментария из общего пула: {e}")
+        return ""
+
+# ========== ФУНКЦИЯ: ОТПРАВКА В ЛОГИ ==========
 async def send_log_message(order_id, master_name, action_text):
     """Отправляет сообщение в группу логов"""
     print(f"DEBUG: send_log_message вызван для заявки {order_id}, действие: {action_text}")
@@ -132,7 +161,7 @@ async def send_log_message(order_id, master_name, action_text):
     except Exception as e:
         print(f"DEBUG: не удалось отправить уведомление в логи: {e}")
 
-# ========== НОВАЯ ФУНКЦИЯ: ДОБАВЛЕНИЕ КОММЕНТАРИЯ В ОБЩИЙ ПУЛ ==========
+# ========== ФУНКЦИЯ: ДОБАВЛЕНИЕ КОММЕНТАРИЯ В ОБЩИЙ ПУЛ ==========
 def add_comment_to_general_pool(order_id, comment, status_name):
     """Добавляет комментарий в Общий пул заявок для статусов Выполнена/Отказ"""
     print(f"DEBUG: add_comment_to_general_pool вызван для order_id={order_id}, comment={comment}, status={status_name}")
@@ -176,7 +205,7 @@ def add_comment_to_general_pool(order_id, comment, status_name):
     except Exception as e:
         print(f"DEBUG: ошибка при добавлении комментария в общий пул: {e}")
 
-# ========== ПЕРЕНАПРАВЛЕНИЕ ==========
+# ========== ПЕРЕНАПРАВЛЕНИЕ (ИЗМЕНЕНО) ==========
 async def redirect_order(data, sheet_name):
     """Перенаправляет заявку в Первичный пул заявок"""
     print("DEBUG: redirect_order вызван")
@@ -206,15 +235,22 @@ async def redirect_order(data, sheet_name):
         
         now = datetime.now(EKATERINBURG_TZ).strftime("%d.%m.%Y")
         
+        # ========== ИЗМЕНЕНИЕ: получаем ПЕРВЫЙ комментарий из общего пула ==========
+        first_comment = get_first_comment_from_general_pool(order_id)
+        print(f"DEBUG: первый комментарий из общего пула: {first_comment}")
+        
+        # Сохраняем в первичный пул (используем первый комментарий вместо комментария мастера)
         primary_sheet.update(range_name=f'A{primary_row}', values=[[order_id]])
         primary_sheet.update(range_name=f'B{primary_row}', values=[[source]])
         primary_sheet.update(range_name=f'C{primary_row}', values=[[receipt_date]])
         primary_sheet.update(range_name=f'E{primary_row}', values=[[client]])
         primary_sheet.update(range_name=f'F{primary_row}', values=[[address]])
+        primary_sheet.update(range_name=f'G{primary_row}', values=[[first_comment]])  # <-- ИЗМЕНЕНО: используется первый комментарий
         primary_sheet.update(range_name=f'H{primary_row}', values=[["Да"]])
         primary_sheet.update(range_name=f'I{primary_row}', values=[[now]])
         
         print(f"DEBUG: заявка {order_id} скопирована в Первичный пул, строка {primary_row}")
+        print(f"DEBUG: в комментарий записан первый комментарий: {first_comment}")
         
         general_sheet = get_worksheet("Общий пул заявок")
         all_ids_general = general_sheet.col_values(1)
@@ -923,7 +959,7 @@ async def confirm_callback(update, context):
         # Записываем в лист мастера
         print(f"DEBUG: вызываем update_order для строки {row}")
         update_order(sheet_name, row, {
-            'order_id': data['order_id'],  # <-- ДОБАВЛЕНО
+            'order_id': data['order_id'],
             'cost': data['cost'],
             'delivery': data['delivery'],
             'expense': data['expense'],
