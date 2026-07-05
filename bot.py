@@ -92,6 +92,64 @@ def update_order(sheet_name, row, data):
     sheet.update(values=[[data.get('comment', '')]], range_name=f'P{row}')
     sheet.update(values=[[data.get('payment_type', '')]], range_name=f'R{row}')
 
+# ========== НОВАЯ ФУНКЦИЯ: ОТПРАВКА В ЛОГИ ==========
+async def send_log_message(order_id, master_name, action_text):
+    """Отправляет сообщение в группу логов"""
+    try:
+        logs_chat_id = -5316127083
+        now = datetime.now(EKATERINBURG_TZ)
+        date_time_str = now.strftime("%d.%m.%Y %H:%M UTC+5")
+        
+        log_text = (
+            f"🟢 {date_time_str} {action_text} ID #{order_id}\n\n"
+            f"<i>Действие совершил: \"{master_name}\"</i>"
+        )
+        
+        await telegram_app.bot.send_message(
+            chat_id=logs_chat_id, 
+            text=log_text, 
+            parse_mode='HTML'
+        )
+        print(f"DEBUG: уведомление отправлено в группу логов: {action_text}")
+    except Exception as e:
+        print(f"DEBUG: не удалось отправить уведомление в логи: {e}")
+
+# ========== НОВАЯ ФУНКЦИЯ: ДОБАВЛЕНИЕ КОММЕНТАРИЯ В ОБЩИЙ ПУЛ ==========
+def add_comment_to_general_pool(order_id, comment, status_name):
+    """Добавляет комментарий в Общий пул заявок для статусов Выполнена/Отказ"""
+    try:
+        general_sheet = get_worksheet("Общий пул заявок")
+        
+        # Находим строку с заявкой
+        all_ids = general_sheet.col_values(1)
+        general_row = None
+        for idx, val in enumerate(all_ids, start=1):
+            if val == order_id:
+                general_row = idx
+                break
+        
+        if not general_row:
+            print(f"DEBUG: заявка {order_id} не найдена в общем пуле")
+            return
+        
+        # Формируем комментарий с префиксом
+        comment_text = f"{status_name}: {comment}" if comment else f"{status_name}"
+        
+        # Ищем первую пустую ячейку в столбцах J-R
+        for col in range(10, 19):
+            cell_value = general_sheet.cell(general_row, col).value
+            if not cell_value:
+                general_sheet.update(
+                    range_name=f'{chr(64 + col)}{general_row}', 
+                    values=[[comment_text]]
+                )
+                print(f"DEBUG: комментарий добавлен в столбец {chr(64 + col)}")
+                break
+                
+    except Exception as e:
+        print(f"DEBUG: ошибка при добавлении комментария в общий пул: {e}")
+
+# ========== ПЕРЕНАПРАВЛЕНИЕ ==========
 async def redirect_order(data, sheet_name):
     """Перенаправляет заявку в Первичный пул заявок"""
     print("DEBUG: redirect_order вызван")
@@ -156,26 +214,9 @@ async def redirect_order(data, sheet_name):
         else:
             print(f"DEBUG: заявка {order_id} не найдена в общем пуле")
         
-        # ========== ОТПРАВКА В ЛОГИ ДВИЖЕНИЯ ЗАЯВОК ==========
-        try:
-            logs_chat_id = -5316127083
-            now = datetime.now(EKATERINBURG_TZ)
-            date_time_str = now.strftime("%d.%m.%Y %H:%M UTC+5")
-            
-            master_name = sheet_name
-            
-            log_text = (
-                f"🟢 {date_time_str} произошел отказ от заявки ID #{order_id}\n\n"
-                f"<i>Действие совершил: \"{master_name}\"</i>"
-            )
-            asyncio.run_coroutine_threadsafe(
-                telegram_app.bot.send_message(chat_id=logs_chat_id, text=log_text, parse_mode='HTML'),
-                main_loop
-            )
-            print("DEBUG: уведомление о перенаправлении отправлено в группу логов")
-        except Exception as e:
-            print(f"DEBUG: не удалось отправить уведомление о перенаправлении: {e}")
-        # =========================================================
+        # ========== ОТПРАВКА В ЛОГИ (используем новую функцию) ==========
+        master_name = sheet_name
+        await send_log_message(order_id, master_name, "заявка отправлена на перенаправление")
             
     except Exception as e:
         print(f"DEBUG: ошибка при перенаправлении: {e}")
@@ -778,6 +819,7 @@ async def confirm_callback(update, context):
     row = data['row']
     status_value = data['status'].replace('✅ ', '').replace('❌ ', '').replace('🔄 ', '')
     
+    # Записываем в лист мастера
     update_order(sheet_name, row, {
         'cost': data['cost'],
         'delivery': data['delivery'],
@@ -788,10 +830,26 @@ async def confirm_callback(update, context):
         'payment_type': data.get('payment_type', '')
     })
     
-    # ========== ЕСЛИ СТАТУС "ПЕРЕНАПРАВЛЕНА" ==========
+    # ========== ОБРАБОТКА РАЗНЫХ СТАТУСОВ ==========
+    
+    # 1. Если статус "Перенаправлена" - выполняем полную логику перенаправления
     if data['status'] == "🔄 Перенаправлена":
         await redirect_order(data, sheet_name)
-    # ===============================================
+    
+    # 2. Если статус "Выполнена" или "Отказ" - добавляем комментарий в общий пул и отправляем лог
+    else:
+        # Добавляем комментарий в "Общий пул заявок"
+        if data['status'] == "✅ Выполнена":
+            add_comment_to_general_pool(data['order_id'], data.get('comment', ''), "Выполнена")
+            # Отправляем в группу логов
+            master_name = context.user_data.get('user_name', 'Неизвестно')
+            await send_log_message(data['order_id'], master_name, "заявка выполнена")
+            
+        elif data['status'] == "❌ Отказ":
+            add_comment_to_general_pool(data['order_id'], data.get('comment', ''), "Отказ")
+            # Отправляем в группу логов
+            master_name = context.user_data.get('user_name', 'Неизвестно')
+            await send_log_message(data['order_id'], master_name, "заявка отклонена")
     
     # ========== ОТПРАВКА ОТЧЕТОВ В ЧАТЫ ==========
     user_id = update.effective_user.id
@@ -816,8 +874,8 @@ async def confirm_callback(update, context):
             await context.bot.send_message(chat_id=chat_id, text=report_text, parse_mode='HTML')
         except Exception as e:
             print(f"⚠️ Не удалось отправить сообщение в чат {chat_id}: {e}")
-    # =========================================
     
+    # ========== УСПЕШНОЕ СООБЩЕНИЕ МАСТЕРУ ==========
     success_message = (
         f"✅ Вы сохранили отчёт по заявке:\n"
         f"📋 ID: {data['order_id']}\n"
