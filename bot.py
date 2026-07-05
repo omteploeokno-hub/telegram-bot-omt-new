@@ -28,6 +28,10 @@ PAYMENT_OPTIONS = [
     ("individual", "Оплату получил мастер"),
     ("legal", "Оплату получила организация")
 ]
+COLLABORATION_OPTIONS = [
+    ("alone", "Индивидуально"),
+    ("together", "Совместно")
+]
 
 # ========== ПОЛЬЗОВАТЕЛИ ==========
 USERS = {
@@ -84,6 +88,8 @@ def get_available_orders(sheet_name):
 
 def update_order(sheet_name, row, data):
     sheet = get_worksheet(sheet_name)
+    
+    # Основные данные
     sheet.update(values=[[data['cost']]], range_name=f'G{row}')
     sheet.update(values=[[data['delivery']]], range_name=f'H{row}')
     sheet.update(values=[[data['expense']]], range_name=f'I{row}')
@@ -91,6 +97,13 @@ def update_order(sheet_name, row, data):
     sheet.update(values=[[data['date']]], range_name=f'D{row}')
     sheet.update(values=[[data.get('comment', '')]], range_name=f'P{row}')
     sheet.update(values=[[data.get('payment_type', '')]], range_name=f'R{row}')
+    
+    # ========== ОБРАБОТКА СОВМЕСТНОЙ ЗАЯВКИ ==========
+    if data.get('collaboration') == True:
+        # Записываем формулы в столбцы L и N
+        sheet.update(values=[[f"=K{row}*0,25+I{row}"]], range_name=f'L{row}')
+        sheet.update(values=[[f"=K{row}*0,5"]], range_name=f'N{row}')
+        print(f"DEBUG: для заявки {data['order_id']} установлены формулы совместной работы")
 
 # ========== НОВАЯ ФУНКЦИЯ: ОТПРАВКА В ЛОГИ ==========
 async def send_log_message(order_id, master_name, action_text):
@@ -214,7 +227,7 @@ async def redirect_order(data, sheet_name):
         else:
             print(f"DEBUG: заявка {order_id} не найдена в общем пуле")
         
-        # ========== ОТПРАВКА В ЛОГИ (используем новую функцию) ==========
+        # ========== ОТПРАВКА В ЛОГИ ==========
         master_name = sheet_name
         await send_log_message(order_id, master_name, "заявка отправлена на перенаправление")
             
@@ -361,12 +374,28 @@ async def go_back(update, context):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     
+    elif step == 'collaboration':
+        context.user_data['step'] = 'payment'
+        keyboard = []
+        for value, label in PAYMENT_OPTIONS:
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"payment_{value}")])
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+        await query.edit_message_text(
+            f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n"
+            f"📅 Дата поступления: {context.user_data['receipt_date']}\n"
+            f"📅 Дата выполнения: {context.user_data['date']}\n"
+            f"📌 Статус: {status}\n\n"
+            f"Кто получил оплату?",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
     elif step == 'cost':
         if is_executed:
-            context.user_data['step'] = 'payment'
+            context.user_data['step'] = 'collaboration'
             keyboard = []
-            for value, label in PAYMENT_OPTIONS:
-                keyboard.append([InlineKeyboardButton(label, callback_data=f"payment_{value}")])
+            for value, label in COLLABORATION_OPTIONS:
+                keyboard.append([InlineKeyboardButton(label, callback_data=f"collaboration_{value}")])
             keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
             keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
             await query.edit_message_text(
@@ -374,7 +403,7 @@ async def go_back(update, context):
                 f"📅 Дата поступления: {context.user_data['receipt_date']}\n"
                 f"📅 Дата выполнения: {context.user_data['date']}\n"
                 f"📌 Статус: {status}\n\n"
-                f"Кто получил оплату?",
+                f"Вы выполняли заявку индивидуально или совместно с другим мастером?",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         else:
@@ -609,6 +638,7 @@ async def status_callback(update, context):
         context.user_data['step'] = 'delivery'
         context.user_data['payment_type'] = ""
         context.user_data['payment_type_display'] = "—"
+        context.user_data['collaboration'] = False
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
         await query.edit_message_text(
             "Введите сумму выезда/доставки (только цифры):",
@@ -635,6 +665,43 @@ async def payment_callback(update, context):
     else:
         context.user_data['payment_type'] = "Ю"
         context.user_data['payment_type_display'] = "🏢 Оплату получила организация"
+    
+    # ========== НОВЫЙ ШАГ: ВЫБОР ИНДИВИДУАЛЬНО/СОВМЕСТНО ==========
+    context.user_data['step'] = 'collaboration'
+    keyboard = []
+    for value, label in COLLABORATION_OPTIONS:
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"collaboration_{value}")])
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back")])
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+    
+    await query.edit_message_text(
+        f"📋 Заявка: {context.user_data['order_id']} - {context.user_data['order_client']} - {context.user_data['order_address']}\n"
+        f"📅 Дата поступления: {context.user_data['receipt_date']}\n"
+        f"📅 Дата выполнения: {context.user_data['date']}\n"
+        f"📌 Статус: {context.user_data['status']}\n\n"
+        f"Вы выполняли заявку индивидуально или совместно с другим мастером?",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# ========== НОВЫЙ ОБРАБОТЧИК: ВЫБОР ИНДИВИДУАЛЬНО/СОВМЕСТНО ==========
+async def collaboration_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "cancel":
+        await cancel_handler(update, context)
+        return
+    
+    if query.data == "back":
+        await go_back(update, context)
+        return
+    
+    collaboration_value = query.data.split('_')[1]
+    
+    if collaboration_value == "alone":
+        context.user_data['collaboration'] = False
+    else:  # together
+        context.user_data['collaboration'] = True
     
     context.user_data['step'] = 'cost'
     keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
@@ -709,6 +776,10 @@ async def handle_text(update, context):
             )
             return
         
+        # ========== ДОБАВЛЯЕМ ТЕКСТ ДЛЯ СОВМЕСТНОЙ ЗАЯВКИ ==========
+        if context.user_data.get('collaboration') == True:
+            comment = comment + " Заявка выполнена двумя мастерами, подробности в комментариях (или уточнить у написавшего отчет)"
+        
         context.user_data['comment'] = comment
         await show_confirmation(update, context)
     
@@ -752,7 +823,13 @@ async def skip_comment(update, context):
         await update.message.reply_text("❌ Комментарий обязателен для этого статуса. Введите комментарий:")
         return
     
-    context.user_data['comment'] = ""
+    comment = ""
+    
+    # ========== ДОБАВЛЯЕМ ТЕКСТ ДЛЯ СОВМЕСТНОЙ ЗАЯВКИ (если пропустили комментарий) ==========
+    if context.user_data.get('collaboration') == True:
+        comment = "Заявка выполнена двумя мастерами, подробности в комментариях (или уточнить у написавшего отчет)"
+    
+    context.user_data['comment'] = comment
     await show_confirmation(update, context)
 
 async def show_confirmation(update, context):
@@ -761,6 +838,7 @@ async def show_confirmation(update, context):
     comment = data.get('comment', '')
     comment_display = comment if comment else "—"
     payment_display = data.get('payment_type_display', '—')
+    collaboration_display = "🤝 Совместно" if data.get('collaboration') == True else "👤 Индивидуально"
     
     text = (
         f"📋 **Проверьте данные:**\n\n"
@@ -772,6 +850,7 @@ async def show_confirmation(update, context):
     
     if status == "✅ Выполнена":
         text += f"💳 Тип оплаты: {payment_display}\n"
+        text += f"👥 Исполнение: {collaboration_display}\n"
     
     text += (
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
@@ -827,7 +906,8 @@ async def confirm_callback(update, context):
         'status': status_value,
         'date': data['date'],
         'comment': data.get('comment', ''),
-        'payment_type': data.get('payment_type', '')
+        'payment_type': data.get('payment_type', ''),
+        'collaboration': data.get('collaboration', False)  # <-- ПЕРЕДАЁМ ФЛАГ
     })
     
     # ========== ОБРАБОТКА РАЗНЫХ СТАТУСОВ ==========
@@ -868,7 +948,11 @@ async def confirm_callback(update, context):
         )
         
         if data.get('status') == "✅ Выполнена":
-            report_text += f"<b>Способ оплаты:</b> {data.get('payment_type_display', '—')}"
+            report_text += f"<b>Способ оплаты:</b> {data.get('payment_type_display', '—')}\n"
+            if data.get('collaboration') == True:
+                report_text += f"<b>Исполнение:</b> 🤝 Совместно\n"
+            else:
+                report_text += f"<b>Исполнение:</b> 👤 Индивидуально\n"
         
         try:
             await context.bot.send_message(chat_id=chat_id, text=report_text, parse_mode='HTML')
@@ -888,6 +972,10 @@ async def confirm_callback(update, context):
     
     if data.get('status') == "✅ Выполнена":
         success_message += f"💳 Тип оплаты: {data.get('payment_type_display', '—')}\n"
+        if data.get('collaboration') == True:
+            success_message += f"👥 Исполнение: Совместно\n"
+        else:
+            success_message += f"👤 Исполнение: Индивидуально\n"
     
     success_message += (
         f"💰 Общая сумма заказа: {data['cost']} руб\n"
@@ -952,6 +1040,7 @@ def run_webhook():
     telegram_app.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
     telegram_app.add_handler(CallbackQueryHandler(date_callback, pattern="^date_"))
     telegram_app.add_handler(CallbackQueryHandler(payment_callback, pattern="^payment_"))
+    telegram_app.add_handler(CallbackQueryHandler(collaboration_callback, pattern="^collaboration_"))  # <-- НОВЫЙ ОБРАБОТЧИК
     telegram_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
     telegram_app.add_handler(CallbackQueryHandler(confirm_callback, pattern="^confirm_"))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
