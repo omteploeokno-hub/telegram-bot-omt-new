@@ -87,6 +87,7 @@ def get_available_orders(sheet_name):
     return orders
 
 def update_order(sheet_name, row, data):
+    print(f"DEBUG: update_order вызван для строки {row}, данные: {data}")
     sheet = get_worksheet(sheet_name)
     
     # Основные данные
@@ -100,14 +101,18 @@ def update_order(sheet_name, row, data):
     
     # ========== ОБРАБОТКА СОВМЕСТНОЙ ЗАЯВКИ ==========
     if data.get('collaboration') == True:
+        print(f"DEBUG: обрабатываем совместную заявку для строки {row}")
         # Используем update_acell для записи формул (без кавычек)
         sheet.update_acell(f'L{row}', f'=K{row}*0,25+I{row}')
         sheet.update_acell(f'N{row}', f'=K{row}*0,5')
-        print(f"DEBUG: для заявки {data['order_id']} установлены формулы совместной работы")
+        print(f"DEBUG: установлены формулы совместной работы для строки {row}")
+    else:
+        print(f"DEBUG: заявка индивидуальная, формулы не устанавливаем")
 
 # ========== НОВАЯ ФУНКЦИЯ: ОТПРАВКА В ЛОГИ ==========
 async def send_log_message(order_id, master_name, action_text):
     """Отправляет сообщение в группу логов"""
+    print(f"DEBUG: send_log_message вызван для заявки {order_id}, действие: {action_text}")
     try:
         logs_chat_id = -5316127083
         now = datetime.now(EKATERINBURG_TZ)
@@ -130,11 +135,14 @@ async def send_log_message(order_id, master_name, action_text):
 # ========== НОВАЯ ФУНКЦИЯ: ДОБАВЛЕНИЕ КОММЕНТАРИЯ В ОБЩИЙ ПУЛ ==========
 def add_comment_to_general_pool(order_id, comment, status_name):
     """Добавляет комментарий в Общий пул заявок для статусов Выполнена/Отказ"""
+    print(f"DEBUG: add_comment_to_general_pool вызван для order_id={order_id}, comment={comment}, status={status_name}")
     try:
         general_sheet = get_worksheet("Общий пул заявок")
         
         # Находим строку с заявкой
         all_ids = general_sheet.col_values(1)
+        print(f"DEBUG: найдено {len(all_ids)} ID в общем пуле")
+        
         general_row = None
         for idx, val in enumerate(all_ids, start=1):
             if val == order_id:
@@ -145,19 +153,25 @@ def add_comment_to_general_pool(order_id, comment, status_name):
             print(f"DEBUG: заявка {order_id} не найдена в общем пуле")
             return
         
+        print(f"DEBUG: заявка {order_id} найдена в строке {general_row}")
+        
         # Формируем комментарий с префиксом
         comment_text = f"{status_name}: {comment}" if comment else f"{status_name}"
+        print(f"DEBUG: комментарий для записи: {comment_text}")
         
         # Ищем первую пустую ячейку в столбцах J-R
         for col in range(10, 19):
             cell_value = general_sheet.cell(general_row, col).value
+            print(f"DEBUG: столбец {chr(64 + col)} = {cell_value}")
             if not cell_value:
                 general_sheet.update(
                     range_name=f'{chr(64 + col)}{general_row}', 
                     values=[[comment_text]]
                 )
                 print(f"DEBUG: комментарий добавлен в столбец {chr(64 + col)}")
-                break
+                return
+                
+        print(f"DEBUG: не найдено свободного места в столбцах J-R")
                 
     except Exception as e:
         print(f"DEBUG: ошибка при добавлении комментария в общий пул: {e}")
@@ -700,8 +714,10 @@ async def collaboration_callback(update, context):
     
     if collaboration_value == "alone":
         context.user_data['collaboration'] = False
+        print("DEBUG: выбран режим 'Индивидуально'")
     else:  # together
         context.user_data['collaboration'] = True
+        print("DEBUG: выбран режим 'Совместно'")
     
     context.user_data['step'] = 'cost'
     keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
@@ -779,6 +795,7 @@ async def handle_text(update, context):
         # ========== ДОБАВЛЯЕМ ТЕКСТ ДЛЯ СОВМЕСТНОЙ ЗАЯВКИ ==========
         if context.user_data.get('collaboration') == True:
             comment = comment + " Заявка выполнена двумя мастерами, подробности в комментариях (или уточнить у написавшего отчет)"
+            print(f"DEBUG: добавлен текст о совместной работе к комментарию")
         
         context.user_data['comment'] = comment
         await show_confirmation(update, context)
@@ -828,6 +845,7 @@ async def skip_comment(update, context):
     # ========== ДОБАВЛЯЕМ ТЕКСТ ДЛЯ СОВМЕСТНОЙ ЗАЯВКИ (если пропустили комментарий) ==========
     if context.user_data.get('collaboration') == True:
         comment = "Заявка выполнена двумя мастерами, подробности в комментариях (или уточнить у написавшего отчет)"
+        print(f"DEBUG: добавлен текст о совместной работе при пропуске комментария")
     
     context.user_data['comment'] = comment
     await show_confirmation(update, context)
@@ -898,9 +916,14 @@ async def confirm_callback(update, context):
     row = data['row']
     status_value = data['status'].replace('✅ ', '').replace('❌ ', '').replace('🔄 ', '')
     
+    print(f"DEBUG: ===== НАЧАЛО ОБРАБОТКИ ПОДТВЕРЖДЕНИЯ =====")
+    print(f"DEBUG: заявка {data['order_id']}, статус {data['status']}, совместно: {data.get('collaboration')}")
+    
     try:
         # Записываем в лист мастера
+        print(f"DEBUG: вызываем update_order для строки {row}")
         update_order(sheet_name, row, {
+            'order_id': data['order_id'],  # <-- ДОБАВЛЕНО
             'cost': data['cost'],
             'delivery': data['delivery'],
             'expense': data['expense'],
@@ -920,6 +943,7 @@ async def confirm_callback(update, context):
     
     # 1. Если статус "Перенаправлена" - выполняем полную логику перенаправления
     if data['status'] == "🔄 Перенаправлена":
+        print(f"DEBUG: статус 'Перенаправлена', вызываем redirect_order")
         try:
             await redirect_order(data, sheet_name)
         except Exception as e:
@@ -927,12 +951,15 @@ async def confirm_callback(update, context):
     
     # 2. Если статус "Выполнена" или "Отказ" - добавляем комментарий в общий пул и отправляем лог
     else:
+        print(f"DEBUG: статус '{data['status']}', обрабатываем комментарий в общем пуле и лог")
         try:
             if data['status'] == "✅ Выполнена":
+                print(f"DEBUG: вызываем add_comment_to_general_pool для выполненной заявки {data['order_id']}")
                 add_comment_to_general_pool(data['order_id'], data.get('comment', ''), "Выполнена")
                 master_name = context.user_data.get('user_name', 'Неизвестно')
                 await send_log_message(data['order_id'], master_name, "заявка выполнена")
             elif data['status'] == "❌ Отказ":
+                print(f"DEBUG: вызываем add_comment_to_general_pool для отклонённой заявки {data['order_id']}")
                 add_comment_to_general_pool(data['order_id'], data.get('comment', ''), "Отказ")
                 master_name = context.user_data.get('user_name', 'Неизвестно')
                 await send_log_message(data['order_id'], master_name, "заявка отклонена")
@@ -964,6 +991,7 @@ async def confirm_callback(update, context):
         
         try:
             await context.bot.send_message(chat_id=chat_id, text=report_text, parse_mode='HTML')
+            print(f"DEBUG: отчёт отправлен в чат {chat_id}")
         except Exception as e:
             print(f"⚠️ Не удалось отправить сообщение в чат {chat_id}: {e}")
     
@@ -995,6 +1023,7 @@ async def confirm_callback(update, context):
         success_message += "\n\n🔄 Заявка отправлена на перенаправление."
     
     await query.edit_message_text(success_message)
+    print(f"DEBUG: сообщение об успехе отправлено пользователю")
     
     await asyncio.sleep(2)
     
@@ -1011,6 +1040,7 @@ async def confirm_callback(update, context):
         "Что дальше?",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    print(f"DEBUG: ===== КОНЕЦ ОБРАБОТКИ ПОДТВЕРЖДЕНИЯ =====")
 
 # ========== ВЕБХУК ==========
 @flask_app.route('/webhook', methods=['POST'])
@@ -1048,7 +1078,7 @@ def run_webhook():
     telegram_app.add_handler(CallbackQueryHandler(select_order_callback, pattern="^order_"))
     telegram_app.add_handler(CallbackQueryHandler(date_callback, pattern="^date_"))
     telegram_app.add_handler(CallbackQueryHandler(payment_callback, pattern="^payment_"))
-    telegram_app.add_handler(CallbackQueryHandler(collaboration_callback, pattern="^collaboration_"))  # <-- НОВЫЙ ОБРАБОТЧИК
+    telegram_app.add_handler(CallbackQueryHandler(collaboration_callback, pattern="^collaboration_"))
     telegram_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
     telegram_app.add_handler(CallbackQueryHandler(confirm_callback, pattern="^confirm_"))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
