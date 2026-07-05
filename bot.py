@@ -100,9 +100,9 @@ def update_order(sheet_name, row, data):
     
     # ========== ОБРАБОТКА СОВМЕСТНОЙ ЗАЯВКИ ==========
     if data.get('collaboration') == True:
-        # Записываем формулы в столбцы L и N
-        sheet.update(values=[[f"=K{row}*0,25+I{row}"]], range_name=f'L{row}')
-        sheet.update(values=[[f"=K{row}*0,5"]], range_name=f'N{row}')
+        # Используем update_acell для записи формул (без кавычек)
+        sheet.update_acell(f'L{row}', f'=K{row}*0,25+I{row}')
+        sheet.update_acell(f'N{row}', f'=K{row}*0,5')
         print(f"DEBUG: для заявки {data['order_id']} установлены формулы совместной работы")
 
 # ========== НОВАЯ ФУНКЦИЯ: ОТПРАВКА В ЛОГИ ==========
@@ -893,11 +893,12 @@ async def confirm_callback(update, context):
         return
     
     # confirm_yes
-    data = context.user_data
-    sheet_name = context.user_data['sheet_name']
-    row = data['row']
-    status_value = data['status'].replace('✅ ', '').replace('❌ ', '').replace('🔄 ', '')
-    
+data = context.user_data
+sheet_name = context.user_data['sheet_name']
+row = data['row']
+status_value = data['status'].replace('✅ ', '').replace('❌ ', '').replace('🔄 ', '')
+
+try:
     # Записываем в лист мастера
     update_order(sheet_name, row, {
         'cost': data['cost'],
@@ -907,29 +908,36 @@ async def confirm_callback(update, context):
         'date': data['date'],
         'comment': data.get('comment', ''),
         'payment_type': data.get('payment_type', ''),
-        'collaboration': data.get('collaboration', False)  # <-- ПЕРЕДАЁМ ФЛАГ
+        'collaboration': data.get('collaboration', False)
     })
-    
-    # ========== ОБРАБОТКА РАЗНЫХ СТАТУСОВ ==========
-    
-    # 1. Если статус "Перенаправлена" - выполняем полную логику перенаправления
-    if data['status'] == "🔄 Перенаправлена":
+    print(f"DEBUG: данные успешно записаны для заявки {data['order_id']}")
+except Exception as e:
+    print(f"❌ ОШИБКА при записи в таблицу: {e}")
+    await query.edit_message_text(f"❌ Произошла ошибка при сохранении отчёта: {e}")
+    return
+
+# ========== ОБРАБОТКА РАЗНЫХ СТАТУСОВ ==========
+
+# 1. Если статус "Перенаправлена" - выполняем полную логику перенаправления
+if data['status'] == "🔄 Перенаправлена":
+    try:
         await redirect_order(data, sheet_name)
-    
-    # 2. Если статус "Выполнена" или "Отказ" - добавляем комментарий в общий пул и отправляем лог
-    else:
-        # Добавляем комментарий в "Общий пул заявок"
+    except Exception as e:
+        print(f"❌ ОШИБКА при перенаправлении: {e}")
+
+# 2. Если статус "Выполнена" или "Отказ" - добавляем комментарий в общий пул и отправляем лог
+else:
+    try:
         if data['status'] == "✅ Выполнена":
             add_comment_to_general_pool(data['order_id'], data.get('comment', ''), "Выполнена")
-            # Отправляем в группу логов
             master_name = context.user_data.get('user_name', 'Неизвестно')
             await send_log_message(data['order_id'], master_name, "заявка выполнена")
-            
         elif data['status'] == "❌ Отказ":
             add_comment_to_general_pool(data['order_id'], data.get('comment', ''), "Отказ")
-            # Отправляем в группу логов
             master_name = context.user_data.get('user_name', 'Неизвестно')
             await send_log_message(data['order_id'], master_name, "заявка отклонена")
+    except Exception as e:
+        print(f"❌ ОШИБКА при отправке логов: {e}")
     
     # ========== ОТПРАВКА ОТЧЕТОВ В ЧАТЫ ==========
     user_id = update.effective_user.id
